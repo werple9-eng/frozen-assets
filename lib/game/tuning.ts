@@ -1,19 +1,21 @@
 export const TUNE = {
+  worldScale: 2.9,
+  trayScale: 2.05,
   step: 0.24,
   nx: 23,
   ny: 14,
   nz: 15,
   baseY: 0.25,
   heat: 1.45,
-  radius: 0.48,
-  wideRadius: 0.78,
+  radius: 0.48 * 2.9,
+  wideRadius: 0.78 * 2.9,
   widePower: 0.52,
   fuelSeconds: 75,
   fuelGain: 40,
   visualFollow: 30,
   meshInterval: 1 / 40,
   connectivityInterval: 0.16,
-  gravity: 13,
+  gravity: 13 * 2.9,
   landingPause: 0.23,
   collectionTime: 0.34,
   transitionTime: 0.38,
@@ -22,7 +24,14 @@ export const TUNE = {
   audioVoices: 12,
   finalRound: 20,
   saveVersion: 3,
+  rotationSensitivity: 0.007,
+  rotationSpring: 150,
+  rotationDamping: 25,
+  rotationTiltLimit: 0.14,
+  rotationMomentum: 0.055,
 };
+// Enlarge real coordinates while keeping the saved scalar-field topology intact.
+export const worldY = (y: number) => 0.18 + (y - 0.18) * TUNE.worldScale;
 export type Vec3 = { x: number; y: number; z: number };
 export type LootKind = 'coin' | 'cash' | 'gold';
 export type Loot = {

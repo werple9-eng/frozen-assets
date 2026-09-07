@@ -42,3 +42,4 @@ next-env.d.ts
 out/
 qa-artifacts/
 *.tar.gz
+/.qa-tools/

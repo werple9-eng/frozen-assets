@@ -1,4 +1,13 @@
 import { IceField } from './ice';
+import { SKILLS, skillState } from './skills';
+import {
+  HEAT,
+  CAPACITY,
+  AFTERHEAT,
+  FAN_RADIUS,
+  COSTS,
+  LEGACY_LEVELS,
+} from './progression';
 import {
   TUNE,
   VALUES,
@@ -21,7 +30,7 @@ export const UPGRADES: Record<
 > = {
   heat: {
     name: 'Heat output',
-    costs: [35, 280, 850, 2100],
+    costs: COSTS.heat,
     effects: [
       '65% more local heat',
       '2.3× starting heat',
@@ -32,19 +41,19 @@ export const UPGRADES: Record<
   },
   tank: {
     name: 'Fuel capacity',
-    costs: [100, 350, 850],
+    costs: COSTS.tank,
     effects: ['75 → 115 seconds', '115 → 155 seconds', '155 → 195 seconds'],
     description: 'More time in the zone.',
   },
   wide: {
     name: 'Fan nozzle',
-    costs: [180],
+    costs: COSTS.wide,
     effects: ['2.6× area · 52% penetration'],
     description: 'Sweep broad areas of shallow ice.',
   },
   residual: {
     name: 'Residual heat',
-    costs: [220, 700],
+    costs: COSTS.residual,
     effects: ['Warmth lingers for 0.7s', 'Stronger lingering warmth'],
     description: 'Keep moving. Let the heat finish.',
   },
@@ -56,6 +65,8 @@ export type Settings = {
   toggle: boolean;
   reducedParticles: boolean;
   largeUI: boolean;
+  reducedMotion: boolean;
+  rotationSensitivity: number;
 };
 const DEFAULT_SETTINGS: Settings = {
   master: 0.65,
@@ -64,6 +75,8 @@ const DEFAULT_SETTINGS: Settings = {
   toggle: false,
   reducedParticles: false,
   largeUI: false,
+  reducedMotion: false,
+  rotationSensitivity: 0.5,
 };
 export const SAVE_KEY = 'frozen-assets-v3';
 export function layout(round: number): Loot[] {
@@ -79,12 +92,12 @@ export function layout(round: number): Loot[] {
       id: `${round}-${result.length}`,
       kind,
       value: VALUES[kind] * (round === 19 ? 2 : 1),
-      x,
-      y,
-      z,
-      w: dims[0],
-      h: dims[1],
-      d: dims[2],
+      x: x * TUNE.worldScale,
+      y: 0.18 + (y - 0.18) * TUNE.worldScale,
+      z: z * TUNE.worldScale,
+      w: dims[0] * TUNE.worldScale,
+      h: dims[1] * TUNE.worldScale,
+      d: dims[2] * TUNE.worldScale,
       state: 'embedded',
       age: 0,
       vy: 0,
@@ -162,6 +175,9 @@ export class GameModel {
   saveElapsed = 0;
   tickTime = 0;
   purchaseTime = -Infinity;
+  focusTime = 0;
+  pulseTime = 0;
+  lastContact: Vec3 | null = null;
   message = '';
   messageTime = 0;
   saveStatus = 'saved';
@@ -169,6 +185,7 @@ export class GameModel {
   onBurst: (p: Vec3, count: number, fragment?: boolean) => void = () => {};
   onChange: () => void = () => {};
   onSave: () => void = () => {};
+  onCredit: (t: Loot) => void = () => {};
   constructor(saved?: string | null) {
     this.loot = layout(0);
     this.field = new IceField(0);
@@ -188,23 +205,32 @@ export class GameModel {
     return this.settings.reducedParticles;
   }
   get heatLevel() {
-    return this.upgrades.heat;
+    return this.upgrades.heat / 3;
   }
   get residual() {
-    return this.upgrades.residual;
+    return AFTERHEAT[this.upgrades.residual];
   }
   get capacity() {
-    return TUNE.fuelSeconds + this.upgrades.tank * TUNE.fuelGain;
+    return CAPACITY[this.upgrades.tank];
   }
   get power() {
     return (
-      ((TUNE.heat * [1, 1.65, 2.3, 3.1, 4][this.upgrades.heat]) /
+      ((TUNE.heat * HEAT[this.upgrades.heat]) /
         (1 + Math.min(this.round, 19) * 0.045)) *
-      (this.mode === 'wide' ? TUNE.widePower : 1)
+      (this.mode === 'wide'
+        ? this.upgrades.wide >= 9
+          ? 0.8
+          : this.upgrades.wide >= 5
+            ? 0.65
+            : TUNE.widePower
+        : 1) *
+      (this.upgrades.heat >= 4 && this.focusTime >= 1.2 ? 1.2 : 1)
     );
   }
   get radius() {
-    return this.mode === 'wide' ? TUNE.wideRadius : TUNE.radius;
+    return this.mode === 'wide'
+      ? TUNE.wideRadius * FAN_RADIUS[this.upgrades.wide]
+      : TUNE.radius;
   }
   get family() {
     return this.round === 19 ? 'The vault' : FAMILY_NAMES[this.round % 4];
@@ -215,6 +241,8 @@ export class GameModel {
   }
   stop() {
     this.firing = false;
+    this.focusTime = 0;
+    this.pulseTime = 0;
   }
   pause(value = true) {
     this.stop();
@@ -247,12 +275,20 @@ export class GameModel {
   price(key: Upgrade) {
     return UPGRADES[key].costs[this.upgrades[key]] ?? null;
   }
+  purchaseSkill(id: string, now = Date.now()) {
+    const node = SKILLS.find((n) => n.id === id);
+    if (!node || skillState(node, this.upgrades) !== 'available') return false;
+    return this.purchase(node.key, now);
+  }
   purchase(key: Upgrade, now = Date.now()) {
     this.stop();
     if (
       !(key in UPGRADES) ||
-      this.phase !== 'playing' ||
-      now - this.purchaseTime < 250
+      !(
+        this.phase === 'playing' ||
+        (this.phase === 'paused' && this.resumePhase === 'playing')
+      ) ||
+      now - this.purchaseTime < 130
     )
       return false;
     const cost = this.price(key);
@@ -263,9 +299,13 @@ export class GameModel {
     this.money -= cost;
     this.upgrades[key]++;
     this.purchaseTime = now;
-    this.onSound('purchase');
+    this.onSound(
+      SKILLS.find((n) => n.key === key && n.level === this.upgrades[key])?.major
+        ? 'unlock'
+        : 'purchase',
+    );
     this.notify(
-      key === 'wide'
+      key === 'wide' && this.upgrades.wide === 1
         ? 'Fan nozzle unlocked. Try a wider sweep.'
         : `${UPGRADES[key].name} upgraded.`,
     );
@@ -294,6 +334,7 @@ export class GameModel {
     this.money += t.value;
     this.earned += t.value;
     this.recovered++;
+    this.onCredit(t);
     return true;
   }
   update = (dt: number, hit: Vec3 | null) => {
@@ -331,6 +372,26 @@ export class GameModel {
     }
     if (this.firing) {
       const used = Math.min(dt, this.fuel);
+      if (hit) {
+        this.focusTime += used;
+        this.pulseTime += used;
+        this.lastContact = { ...hit };
+        if (this.upgrades.heat >= 8 && this.pulseTime >= 1.5) {
+          this.pulseTime = 0;
+          this.field.melt(
+            hit,
+            0.16,
+            this.power,
+            this.radius * 1.2,
+            this.residual,
+          );
+          this.onBurst(hit, 5, true);
+          this.onSound('crack', 0.4);
+        }
+      } else {
+        this.focusTime = 0;
+        this.pulseTime = 0;
+      }
       this.fuel = Math.max(0, this.fuel - used);
       if (
         used > 0 &&
@@ -347,8 +408,23 @@ export class GameModel {
         this.stop();
         this.notify('Tank empty. Refill for free to keep going.');
       }
-    } else if (this.residual)
-      this.field.melt(null, dt, 0, this.radius, this.residual);
+    } else {
+      if (this.lastContact && this.upgrades.residual >= 9) {
+        this.field.melt(
+          this.lastContact,
+          0.12,
+          this.power * 0.5,
+          this.radius * 1.6,
+          this.residual,
+        );
+        this.onBurst(this.lastContact, 4);
+      }
+      this.lastContact = null;
+      if (this.residual)
+        this.field.melt(null, dt, 0, this.radius, this.residual);
+      if (this.upgrades.tank >= 8)
+        this.fuel = Math.min(this.capacity, this.fuel + dt * 2);
+    }
     this.connect += dt;
     if (this.connect >= TUNE.connectivityInterval) {
       this.connect = 0;
@@ -415,6 +491,12 @@ export class GameModel {
   };
   nextBlock() {
     this.round++;
+    if (this.upgrades.tank >= 4)
+      this.fuel = Math.min(
+        this.capacity,
+        this.fuel + this.capacity * (this.upgrades.tank >= 12 ? 0.5 : 0.2),
+      );
+    this.lastContact = null;
     this.loot = layout(this.round);
     this.field = new IceField(this.round);
     this.field.carveLoot(this.loot);
@@ -459,6 +541,9 @@ export class GameModel {
   snapshot() {
     return {
       phase: this.phase,
+      canPurchase:
+        this.phase === 'playing' ||
+        (this.phase === 'paused' && this.resumePhase === 'playing'),
       round: this.round,
       money: this.money,
       earned: this.earned,
@@ -482,6 +567,7 @@ export class GameModel {
   serialize() {
     return JSON.stringify({
       version: TUNE.saveVersion,
+      progression: 2,
       round: this.round,
       money: this.money,
       earned: this.earned,
@@ -500,6 +586,19 @@ export class GameModel {
   restore(raw: string) {
     try {
       const s = JSON.parse(raw);
+      if (s && s.progression === undefined && s.upgrades) {
+        s.upgrades = { ...s.upgrades };
+        for (const key of Object.keys(LEGACY_LEVELS) as Upgrade[]) {
+          const old = s.upgrades[key];
+          if (
+            !Number.isInteger(old) ||
+            old < 0 ||
+            old >= LEGACY_LEVELS[key].length
+          )
+            throw new Error('Invalid legacy upgrade');
+          s.upgrades[key] = LEGACY_LEVELS[key][old];
+        }
+      } else if (s?.progression !== 2) throw new Error('Unknown progression');
       const integer = (v: unknown, min: number, max: number) =>
         typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
       if (
@@ -535,7 +634,7 @@ export class GameModel {
       if (
         !Number.isFinite(s.fuel) ||
         s.fuel < 0 ||
-        s.fuel > TUNE.fuelSeconds + s.upgrades.tank * TUNE.fuelGain
+        s.fuel > CAPACITY[s.upgrades.tank]
       )
         throw new Error('Invalid fuel');
       this.round = s.round;
@@ -561,7 +660,7 @@ export class GameModel {
           ? 'completed'
           : 'playing';
       if (s.settings) {
-        for (const k of ['master', 'effects'] as const)
+        for (const k of ['master', 'effects', 'rotationSensitivity'] as const)
           if (Number.isFinite(s.settings[k]))
             this.settings[k] = Math.max(0, Math.min(1, s.settings[k]));
         for (const k of [
@@ -569,6 +668,7 @@ export class GameModel {
           'toggle',
           'reducedParticles',
           'largeUI',
+          'reducedMotion',
         ] as const)
           if (typeof s.settings[k] === 'boolean')
             this.settings[k] = s.settings[k];

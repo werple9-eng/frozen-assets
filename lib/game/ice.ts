@@ -1,4 +1,4 @@
-import { TUNE, type Loot, type Vec3 } from './tuning';
+import { TUNE, worldY, type Loot, type Vec3 } from './tuning';
 
 // One scalar field owns the visible surface, ray hits, restraints, and connectivity.
 export class IceField {
@@ -19,8 +19,8 @@ export class IceField {
     this.visited = new Uint8Array(this.values.length);
     this.queue = new Int32Array(this.values.length);
     const final = round === TUNE.finalRound - 1;
-    const width = final ? 2.37 : round === 0 ? 1.84 : 2.1;
-    const height = round === 0 ? 1.67 : final ? 2.8 : 2.35;
+    const width = final ? 2.37 : 2.1;
+    const height = final ? 2.8 : 2.35;
     for (let z = 0; z < nz; z++)
       for (let y = 0; y < ny; y++)
         for (let x = 0; x < nx; x++) {
@@ -32,11 +32,15 @@ export class IceField {
             y: y === 0 ? -0.13 : baseY + y * step,
             z: (z - (nz - 1) / 2) * step,
           };
-          this.points[i] = p;
+          this.points[i] = {
+            x: p.x * TUNE.worldScale,
+            y: worldY(p.y),
+            z: p.z * TUNE.worldScale,
+          };
           const edge = Math.min(
             width - Math.abs(p.x),
             height - (p.y - baseY),
-            (round === 0 ? 1.05 : 1.38) - Math.abs(p.z),
+            1.38 - Math.abs(p.z),
           );
           this.values[i] =
             x && y && z && x < nx - 1 && y < ny - 1 && z < nz - 1
@@ -155,9 +159,9 @@ export class IceField {
       if (this.values[i] <= 0.5) continue;
       const p = this.points[i];
       if (
-        Math.abs(p.x - t.x) < t.w * 0.5 + 0.06 &&
-        Math.abs(p.z - t.z) < t.d * 0.5 + 0.06 &&
-        p.y < t.y + t.h * 0.5 + 0.06
+        Math.abs(p.x - t.x) < t.w * 0.5 + 0.06 * TUNE.worldScale &&
+        Math.abs(p.z - t.z) < t.d * 0.5 + 0.06 * TUNE.worldScale &&
+        p.y < t.y + t.h * 0.5 + 0.06 * TUNE.worldScale
       )
         count++;
     }
@@ -166,9 +170,9 @@ export class IceField {
     for (let i = 0; i < this.values.length; i++) {
       const p = this.points[i];
       if (
-        Math.abs(p.x - t.x) < t.w * 0.5 + 0.18 &&
-        Math.abs(p.z - t.z) < t.d * 0.5 + 0.18 &&
-        p.y < t.y + t.h * 0.5 + 0.15
+        Math.abs(p.x - t.x) < t.w * 0.5 + 0.18 * TUNE.worldScale &&
+        Math.abs(p.z - t.z) < t.d * 0.5 + 0.18 * TUNE.worldScale &&
+        p.y < t.y + t.h * 0.5 + 0.15 * TUNE.worldScale
       ) {
         this.values[i] = 0;
         this.warmth[i] = 0;

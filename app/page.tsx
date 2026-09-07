@@ -1,36 +1,10 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
-import {
-  Snowflake,
-  Flame,
-  Mouse,
-  Pause,
-  Volume2,
-  VolumeX,
-  ArrowUpRight,
-  Coins,
-  Crosshair,
-  Gauge,
-  Fuel,
-  Fan,
-  Waves,
-  Check,
-  LockKeyhole,
-  RotateCcw,
-  Play,
-  Trophy,
-} from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { GameScene } from '@/lib/game/scene';
-import {
-  GameModel,
-  SAVE_KEY,
-  UPGRADES,
-  type Upgrade,
-  type Settings,
-} from '@/lib/game/model';
-import { TUNE } from '@/lib/game/tuning';
+import { GameModel, SAVE_KEY, type Settings } from '@/lib/game/model';
+import { TactileButton, DotCursor } from '@/components/game/tactile';
+import { SkillTree } from '@/components/game/skill-tree';
 import { registerGameTools } from '@/lib/game/webmcp';
-import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -48,27 +22,41 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Progress } from '@/components/ui/progress';
-const ICONS = { heat: Flame, tank: Gauge, wide: Fan, residual: Waves };
+type Menu = 'skills' | 'settings' | 'pause' | null;
+type Reward = { id: number; value: number; x: number; y: number };
 const initial = new GameModel().snapshot();
+const dollars = (n: number) => `$${n.toLocaleString()}`;
 export default function Home() {
   const host = useRef<HTMLDivElement>(null),
     scene = useRef<GameScene | null>(null),
     game = useRef<GameModel | null>(null);
   const [s, setS] = useState(initial),
+    [menu, setMenu] = useState<Menu>(null),
     [restart, setRestart] = useState(false),
     [failure, setFailure] = useState(''),
-    [displayMoney, setDisplayMoney] = useState(0);
-  const moneyRef = useRef(0);
+    [displayMoney, setDisplayMoney] = useState(0),
+    [rotate, setRotate] = useState(false),
+    [rotated, setRotated] = useState(false),
+    [rewards, setRewards] = useState<Reward[]>([]),
+    [moneyPulse, setMoneyPulse] = useState(0),
+    [testing, setTesting] = useState(false);
+  const menuRef = useRef<Menu>(null),
+    moneyRef = useRef(0),
+    rewardId = useRef(0);
   useEffect(() => {
+    const qa =
+      ['localhost', '127.0.0.1'].includes(location.hostname) &&
+      new URLSearchParams(location.search).get('qa') === '1';
     let raw: string | null = null;
-    try {
-      raw = localStorage.getItem(SAVE_KEY);
-    } catch {}
+    if (!qa)
+      try {
+        raw = localStorage.getItem(SAVE_KEY);
+      } catch {}
     const m = new GameModel(raw);
     game.current = m;
     const save = () => {
+      if (qa) return;
       try {
         localStorage.setItem(SAVE_KEY, m.serialize());
         m.saveStatus = 'saved';
@@ -77,29 +65,55 @@ export default function Home() {
       }
     };
     m.onSave = save;
-    m.onChange = () => setS(m.snapshot());
     let engine: GameScene;
     try {
       engine = new GameScene(host.current!, m);
       scene.current = engine;
-    } catch (err) {
+    } catch {
+      // Renderer initialization is an external system; report its failure to the player.
+      // eslint-disable-next-line react/react-compiler
       setFailure(
-        'The 3D renderer could not start. Enable hardware acceleration in your browser, then reload.',
+        'The 3D renderer could not start. Enable browser hardware acceleration and reload.',
       );
       return;
     }
     m.onSound = (kind, intensity) => engine.audio.sound(kind, intensity);
     m.onBurst = (point, count, fragment) =>
       engine.burst(point, count, fragment);
-    const audioSettings = () => {
+    m.onCredit = (t) => {
+      const g = engine.lootMeshes.get(t.id);
+      if (!g) return;
+      const p = g.getWorldPosition(engine.scratch).project(engine.camera),
+        r = host.current!.getBoundingClientRect(),
+        id = ++rewardId.current;
+      setRewards((prev) => [
+        ...prev.slice(-3),
+        {
+          id,
+          value: t.value,
+          x: r.left + ((p.x + 1) * r.width) / 2,
+          y: r.top + ((1 - p.y) * r.height) / 2,
+        },
+      ]);
+      setMoneyPulse(id);
+    };
+    engine.onViewChange = () => {
+      setRotate(engine.rotateMode);
+      setRotated(engine.turntable.demonstrated);
+    };
+    m.onChange = () => {
+      setTesting(qa);
       engine.audio.masterVolume = m.settings.master;
       engine.audio.effects = m.settings.effects;
       engine.audio.muted = m.settings.muted;
       engine.audio.volume();
-    };
-    audioSettings();
-    m.onChange = () => {
-      audioSettings();
+      if (m.phase === 'paused' && !menuRef.current) {
+        menuRef.current = 'pause';
+        setMenu('pause');
+      } else if (m.phase !== 'paused' && menuRef.current) {
+        menuRef.current = null;
+        setMenu(null);
+      }
       setS(m.snapshot());
     };
     const unregister = registerGameTools(engine, () => m.snapshot());
@@ -107,7 +121,14 @@ export default function Home() {
       if (
         e.defaultPrevented ||
         e.repeat ||
-        (e.target as HTMLElement)?.tagName === 'INPUT'
+        (e.target as HTMLElement)?.closest('input,[role="slider"]')
+      )
+        return;
+      if (
+        e.key === 'Escape' &&
+        (e.target as HTMLElement)?.closest(
+          '[role="dialog"],[role="alertdialog"]',
+        )
       )
         return;
       if (
@@ -116,6 +137,10 @@ export default function Home() {
         m.phase !== 'completed'
       ) {
         e.preventDefault();
+        e.stopPropagation();
+        engine.cancelInput();
+        menuRef.current = 'pause';
+        setMenu('pause');
         m.pause(true);
       }
       if (m.phase === 'playing') {
@@ -125,28 +150,52 @@ export default function Home() {
         }
         if (e.key === '1') m.selectMode('precision');
         if (e.key === '2') m.selectMode('wide');
+        if (e.key.toLowerCase() === 'u') {
+          engine.cancelInput();
+          menuRef.current = 'skills';
+          setMenu('skills');
+          m.pause(true);
+        }
       }
     };
     const loseFocus = () => {
-      m.stop();
-      engine.audio.fire(false, false);
-      save();
+        engine.cancelInput();
+        save();
+      },
+      hide = () => {
+        if (document.hidden) loseFocus();
+      };
+    const hover = (e: PointerEvent) => {
+      const b = (e.target as HTMLElement)?.closest('button,[role="switch"]');
+      if (
+        b &&
+        !b.contains(e.relatedTarget as Node) &&
+        !(b as HTMLButtonElement).disabled
+      )
+        engine.audio.ui('hover');
     };
-    const hide = () => {
-      if (document.hidden) loseFocus();
+    const press = (e: PointerEvent) => {
+      if ((e.target as HTMLElement)?.closest('button,[role="switch"]')) {
+        engine.audio.init();
+        engine.audio.ui('press');
+      }
     };
-    window.addEventListener('keydown', keys);
+    window.addEventListener('keydown', keys, true);
     window.addEventListener('blur', loseFocus);
     window.addEventListener('pagehide', loseFocus);
     document.addEventListener('visibilitychange', hide);
+    document.addEventListener('pointerover', hover);
+    document.addEventListener('pointerdown', press);
     m.emit();
     return () => {
       save();
       unregister();
-      window.removeEventListener('keydown', keys);
+      window.removeEventListener('keydown', keys, true);
       window.removeEventListener('blur', loseFocus);
       window.removeEventListener('pagehide', loseFocus);
       document.removeEventListener('visibilitychange', hide);
+      document.removeEventListener('pointerover', hover);
+      document.removeEventListener('pointerdown', press);
       engine.dispose();
     };
   }, []);
@@ -174,421 +223,395 @@ export default function Home() {
   };
   const setting = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     action((m) => m.setSetting(key, value));
-  const pause = (open: boolean) => action((m) => m.pause(open));
+  const openMenu = (next: Menu) => {
+    scene.current?.cancelInput();
+    scene.current?.audio.ui(next ? 'open' : 'close');
+    menuRef.current = next;
+    setMenu(next);
+    action((m) => m.pause(!!next));
+  };
   const reset = () => {
     setRestart(false);
+    menuRef.current = null;
+    setMenu(null);
+    setRewards([]);
     action((m) => {
-      scene.current?.audio.fire(false, false);
+      scene.current?.cancelInput();
       scene.current?.clearParticles();
+      scene.current?.turntable.home();
       m.restart();
     });
   };
   const fuel = Math.max(0, (s.fuel / s.capacity) * 100),
     busy = s.phase !== 'playing';
-  const title =
-    s.round === 0
-      ? 'Break the ice.'
-      : s.round === 19
-        ? 'The final thaw.'
-        : s.continuing
-          ? 'Back to the bench.'
-          : s.round % 4 === 2
-            ? 'Find the weak spot.'
-            : s.round % 4 === 3
-              ? 'A deeper deposit.'
-              : 'Keep the change.';
-  return (
-    <main className={`game-shell ${s.settings.largeUI ? 'large-ui' : ''}`}>
-      <header className="topbar">
-        <div className="brand">
-          <Snowflake size={30} />
-          <strong>
-            FROZEN ASSETS<span className="edition">RECOVERY DIVISION</span>
-          </strong>
+  const navigation = (active: Menu = null) => (
+    <header className="hud-top" data-hud>
+      <TactileButton
+        className="station-mark"
+        aria-label="Pause bench"
+        onClick={() => openMenu('pause')}
+      >
+        <span className="machine-mark">F/A</span>
+        <div>
+          <h1>FROZEN ASSETS</h1>
+          <span>
+            BATCH {String(s.round + 1).padStart(2, '0')} /{' '}
+            {s.continuing ? '∞' : '20'} · {s.family}
+          </span>
         </div>
-        <div className="balance">
-          <span>AVAILABLE FUNDS</span>
-          <strong aria-label={`Available funds: ${s.money} dollars`}>
-            <small>$</small>
-            {displayMoney.toLocaleString()}
-          </strong>
-        </div>
-        <div className="header-actions">
-          <button
-            aria-label={s.settings.muted ? 'Unmute sound' : 'Mute sound'}
-            onClick={() => setting('muted', !s.settings.muted)}
-          >
-            {s.settings.muted ? <VolumeX size={19} /> : <Volume2 size={19} />}
-          </button>
-          <button aria-label="Pause and settings" onClick={() => pause(true)}>
-            <Pause size={19} />
-          </button>
-        </div>
-      </header>
-      <div className="workspace">
-        <section className="play-area">
-          <div className="station-heading">
-            <div>
-              <span className="eyebrow">
-                ASSET RECOVERY / BATCH {String(s.round + 1).padStart(3, '0')}
-              </span>
-              <h1>{title}</h1>
-              <p>
-                {s.round === 0
-                  ? 'The bank froze your assets. Literally.'
-                  : s.round === 19
-                    ? 'One last vault. Every asset comes home.'
-                    : s.round % 4 === 2
-                      ? 'One shared support. A whole account waiting.'
-                      : 'A little patience. A little heat. All yours.'}
-              </p>
-            </div>
-            <span className="live-tag">
-              <i />{' '}
-              {s.phase === 'playing' ? 'STATION ONLINE' : 'STATION STANDBY'}
-            </span>
-          </div>
-          <div className="scene" ref={host} />
-          {failure && (
-            <div className="render-error" role="alert">
-              {failure}
-              <Button onClick={() => location.reload()}>Reload</Button>
-            </div>
-          )}
-          <div className="bench-caption">
-            <span>
-              <i className={s.firing ? 'live active' : 'live'} />
-              {s.phase === 'transitioning'
-                ? 'NEXT BATCH ARRIVING'
-                : s.phase === 'refilling'
-                  ? 'REFILLING'
-                  : s.firing
-                    ? 'TORCH ACTIVE'
-                    : s.fuel === 0
-                      ? 'REFILL TO CONTINUE'
-                      : 'READY TO RECOVER'}
-            </span>
-            <span>
-              {s.family.toUpperCase()}{' '}
-              <b>
-                {s.collected} / {s.total} RECOVERED
-              </b>
-            </span>
-          </div>
-          <div
-            className={`instruction ${s.message ? 'has-message' : ''}`}
-            role="status"
-          >
-            {s.message ? <Check size={18} /> : <Mouse size={20} />}
-            <span>
-              {s.message || (
-                <>
-                  <strong>
-                    {s.settings.toggle
-                      ? 'Click to fire. Click to stop.'
-                      : 'Hold to melt.'}
-                  </strong>{' '}
-                  {s.round % 4 === 2
-                    ? 'Cut the narrow support.'
-                    : 'Sweep around a find to free it.'}
-                </>
-              )}
-            </span>
-          </div>
-          <div className="tool-dock">
-            <div className="torch-status">
-              <Flame size={24} />
-              <div>
-                <span>FIELD TORCH · MK {s.upgrades.heat + 1}</span>
-                <strong>
-                  {s.mode === 'wide' ? 'Fan nozzle' : 'Precision nozzle'}
-                </strong>
-              </div>
-            </div>
-            <div className="fuel-control">
-              <div className="fuel-label">
-                <span>
-                  <Fuel size={14} /> FUEL
-                </span>
-                <b>{Math.ceil(fuel)}%</b>
-              </div>
-              <Progress
-                aria-label="Fuel remaining"
-                value={fuel}
-                className={`fuel-progress ${fuel < 15 ? 'low' : ''}`}
-              />
-            </div>
-            <button
-              className={`refill ${fuel === 0 ? 'empty' : ''}`}
-              disabled={busy}
-              onClick={() => action((m) => m.refill())}
-            >
-              Refill <span>R · FREE</span>
-            </button>
-          </div>
-        </section>
-        <aside className="upgrade-panel">
-          <div className="panel-heading">
-            <span className="eyebrow">BETTER TOOLS. WARMER ASSETS.</span>
-            <h2>
-              Workshop <ArrowUpRight size={20} />
-            </h2>
-          </div>
-          <div className="mode-label">
-            <span>NOZZLE</span>
-            <span>1 / 2 TO SWITCH</span>
-          </div>
-          <RadioGroup
-            aria-label="Nozzle mode"
-            value={s.mode}
-            onValueChange={(v) => action((m) => m.selectMode(String(v)))}
-            className="nozzle-options"
-          >
-            <label
-              className={`nozzle-option ${s.mode === 'precision' ? 'selected' : ''}`}
-            >
-              <Crosshair size={22} />
-              <span>
-                <strong>Precision</strong>
-                <small>Focused penetration</small>
-              </span>
-              <RadioGroupItem
-                value="precision"
-                aria-label="Precision nozzle"
-                disabled={busy}
-              />
-            </label>
-            <label
-              className={`nozzle-option ${s.mode === 'wide' ? 'selected' : ''} ${!s.upgrades.wide ? 'locked' : ''}`}
-            >
-              <Fan size={22} />
-              <span>
-                <strong>Fan</strong>
-                <small>
-                  {s.upgrades.wide
-                    ? 'Wider, gentler heat'
-                    : 'Unlock in workshop'}
-                </small>
-              </span>
-              {!s.upgrades.wide ? (
-                <LockKeyhole size={13} />
-              ) : (
-                <RadioGroupItem
-                  value="wide"
-                  aria-label="Fan nozzle"
-                  disabled={busy}
-                />
-              )}
-            </label>
-          </RadioGroup>
-          <div className="panel-rule" />
-          <div className="section-label">UPGRADES</div>
-          <div className="upgrades">
-            {(Object.keys(UPGRADES) as Upgrade[]).map((key) => {
-              const u = UPGRADES[key],
-                level = s.upgrades[key],
-                cost = u.costs[level],
-                max = cost === undefined,
-                Icon = ICONS[key],
-                afford = !max && s.money >= cost;
-              return (
-                <div
-                  className={`upgrade-card ${afford ? 'affordable' : ''}`}
-                  key={key}
-                >
-                  <div className="upgrade-title">
-                    <Icon size={19} />
-                    <strong>{u.name}</strong>
-                    <span>
-                      {max ? <Check size={13} /> : `${level}/${u.costs.length}`}
-                    </span>
-                  </div>
-                  <p>{u.description}</p>
-                  <div className="upgrade-bottom">
-                    <span>{max ? 'Fully upgraded' : u.effects[level]}</span>
-                    <button
-                      disabled={busy || max || !afford}
-                      onClick={() => action((m) => m.purchase(key))}
-                      aria-label={
-                        max
-                          ? `${u.name} fully upgraded`
-                          : `Upgrade ${u.name} for ${cost} dollars`
-                      }
-                      className="buy"
-                    >
-                      {max ? 'MAX' : `$${cost.toLocaleString()}`}
-                      {!max && <span>+</span>}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="recovery-progress">
-            <div>
-              <span>
-                {s.continuing ? 'ASSETS RECLAIMED' : 'RECOVERY PROGRESS'}
-              </span>
-              <b>
-                {s.continuing ? 'COMPLETE' : `${Math.min(20, s.round)} / 20`}
-              </b>
-            </div>
-            <Progress
-              aria-label="Recovery progress"
-              value={s.continuing ? 100 : Math.min(100, (s.round / 20) * 100)}
-            />
-            <p>
-              {s.continuing
-                ? 'Keep recovering at your own pace.'
-                : s.round === 0
-                  ? 'Your first coin buys a hotter torch.'
-                  : s.round < 19
-                    ? 'The vault is waiting. Keep thawing.'
-                    : 'The final batch is on your bench.'}
-            </p>
-          </div>
-          <div className="save-status">
-            <i />{' '}
-            {s.saveStatus === 'unavailable'
-              ? 'SAVE UNAVAILABLE IN THIS BROWSER'
-              : s.saveStatus === 'invalid'
-                ? 'INVALID SAVE · FRESH START'
-                : 'SAVED ON THIS DEVICE'}
-          </div>
-        </aside>
+      </TactileButton>
+      <nav aria-label="Station menus" data-active={active || 'bench'}>
+        <TactileButton
+          aria-current={active === 'skills' ? 'page' : undefined}
+          onClick={() => openMenu(active === 'skills' ? null : 'skills')}
+        >
+          Skill Tree <kbd>U</kbd>
+        </TactileButton>
+        <TactileButton
+          aria-current={active === 'settings' ? 'page' : undefined}
+          onClick={() => openMenu(active === 'settings' ? null : 'settings')}
+        >
+          Settings
+        </TactileButton>
+        <i className="nav-marker" />
+      </nav>
+      <div className="balance" key={`balance-${moneyPulse}`}>
+        <span>RECOVERED FUNDS</span>
+        <strong aria-label={`Available funds: ${s.money} dollars`}>
+          {dollars(displayMoney)}
+        </strong>
       </div>
-      <footer>
-        <span>
-          FROZEN ASSETS <b> / </b> FIELD STATION 01
-        </span>
-        <span>
-          MOVE TO AIM <b>·</b>{' '}
-          {s.settings.toggle ? 'CLICK TO FIRE' : 'HOLD TO MELT'} <b>·</b> ESC TO
-          PAUSE
-        </span>
-      </footer>
+    </header>
+  );
+  const comfortClass = `${s.settings.largeUI ? 'large-ui' : ''} ${s.settings.reducedMotion ? 'reduced-motion' : ''}`;
+  return (
+    <main
+      className={`game-shell ${comfortClass} ${rotate ? 'rotation-mode' : ''}`}
+    >
+      <div className="scene" ref={host} />
+      {failure && (
+        <div className="render-error" role="alert">
+          {failure}
+          <TactileButton onClick={() => location.reload()}>
+            Reload
+          </TactileButton>
+        </div>
+      )}
+      {!menu && navigation()}
+      <DotCursor />
+      {s.round === 0 && (
+        <p className="premise">
+          The bank froze your assets. <em>Literally.</em>
+        </p>
+      )}
+      <output className="recovery-message" key={s.message}>
+        {s.message}
+      </output>
+      <div className="control-rail">
+        <div className="fuel-unit" data-hud>
+          <div className="fuel-title">
+            <span>FUEL</span>
+            <b>{Math.ceil(fuel)}%</b>
+          </div>
+          <Progress
+            value={fuel}
+            aria-label="Fuel remaining"
+            className={`fuel-progress ${fuel < 15 ? 'low' : ''}`}
+          />
+          <TactileButton
+            disabled={busy}
+            className={fuel === 0 ? 'empty' : ''}
+            onClick={() => action((m) => m.refill())}
+          >
+            {s.phase === 'refilling' ? 'Refilling…' : 'Refill'}{' '}
+            <small>FREE</small>
+            <kbd>R</kbd>
+          </TactileButton>
+        </div>
+        {!rotated && (
+          <div className="interaction-hint">
+            <strong>Hold on ice to melt.</strong>
+            <span>Drag the tray to turn it.</span>
+          </div>
+        )}
+        <div className="tool-controls" data-hud>
+          {s.upgrades.wide > 0 && (
+            <fieldset className="nozzle-switch" aria-label="Nozzle mode">
+              <TactileButton
+                aria-pressed={s.mode === 'precision'}
+                disabled={busy}
+                onClick={() => action((m) => m.selectMode('precision'))}
+              >
+                Precision <kbd>1</kbd>
+              </TactileButton>
+              <TactileButton
+                aria-pressed={s.mode === 'wide'}
+                disabled={busy}
+                onClick={() => action((m) => m.selectMode('wide'))}
+              >
+                Fan <kbd>2</kbd>
+              </TactileButton>
+            </fieldset>
+          )}
+          {rotated && (
+            <TactileButton
+              className="center-tray"
+              disabled={busy}
+              onClick={() => {
+                scene.current?.cancelInput();
+                scene.current?.turntable.home();
+              }}
+            >
+              Center tray <kbd>C</kbd>
+            </TactileButton>
+          )}
+        </div>
+      </div>
+      {testing && (
+        <span className="test-indicator">PRACTICE BENCH · SAVE UNTOUCHED</span>
+      )}
+      {rewards.map((r) => (
+        <div
+          key={r.id}
+          className="reward-flight"
+          style={
+            { '--from-x': `${r.x}px`, '--from-y': `${r.y}px` } as CSSProperties
+          }
+          onAnimationEnd={() =>
+            setRewards((prev) => prev.filter((x) => x.id !== r.id))
+          }
+        >
+          <span>+{dollars(r.value)}</span>
+          <i />
+        </div>
+      ))}
       <Dialog
-        open={s.phase === 'paused'}
+        open={s.phase === 'paused' && menu === 'skills' && !restart}
         onOpenChange={(open) => {
-          if (!restart) pause(open);
+          if (!open && menuRef.current === 'skills') openMenu(null);
         }}
       >
-        <DialogContent className="settings-modal">
-          <div className="modal-symbol">
-            <Pause size={23} />
-          </div>
-          <DialogTitle className="modal-title">Take a breather.</DialogTitle>
-          <DialogDescription>
-            Your assets can wait. Your progress is saved.
-          </DialogDescription>
-          <div className="setting-row">
-            <label id="master-label">
-              Master volume <span>{Math.round(s.settings.master * 100)}%</span>
-            </label>
-            <Slider
-              aria-labelledby="master-label"
-              value={[s.settings.master * 100]}
-              onValueChange={(v) =>
-                setting('master', (Array.isArray(v) ? v[0] : v) / 100)
-              }
+        <DialogContent
+          className={`station-screen skill-screen ${comfortClass}`}
+          unstyled
+          showCloseButton={false}
+        >
+          {navigation('skills')}
+          <section className="skill-plate">
+            <div className="skill-title">
+              <div>
+                <span className="plate-eyebrow">
+                  42 UPGRADES · FOUR WAYS TO THAW
+                </span>
+                <DialogTitle>Skill Tree</DialogTitle>
+              </div>
+              <DialogDescription>Choose your next upgrade.</DialogDescription>
+            </div>
+            <SkillTree
+              levels={s.upgrades}
+              money={s.money}
+              canPurchase={s.canPurchase}
+              purchase={(id) => {
+                const m = game.current;
+                if (!m) return false;
+                scene.current?.audio.init();
+                const ok = m.purchaseSkill(id);
+                m.emit();
+                return ok;
+              }}
             />
-          </div>
-          <div className="setting-row">
-            <label id="effects-label">
-              Sound effects <span>{Math.round(s.settings.effects * 100)}%</span>
-            </label>
-            <Slider
-              aria-labelledby="effects-label"
-              value={[s.settings.effects * 100]}
-              onValueChange={(v) =>
-                setting('effects', (Array.isArray(v) ? v[0] : v) / 100)
-              }
-            />
-          </div>
-          <div className="setting-switch">
-            <label htmlFor="mute-switch">Mute audio</label>
-            <Switch
-              id="mute-switch"
-              checked={s.settings.muted}
-              onCheckedChange={(v) => setting('muted', v)}
-            />
-          </div>
-          <div className="setting-switch">
-            <label htmlFor="toggle-switch">
-              Toggle to fire<small>Click once to start, again to stop.</small>
-            </label>
-            <Switch
-              id="toggle-switch"
-              checked={s.settings.toggle}
-              onCheckedChange={(v) => setting('toggle', v)}
-            />
-          </div>
-          <div className="setting-switch">
-            <label htmlFor="particles-switch">Fewer particles</label>
-            <Switch
-              id="particles-switch"
-              checked={s.settings.reducedParticles}
-              onCheckedChange={(v) => setting('reducedParticles', v)}
-            />
-          </div>
-          <div className="setting-switch">
-            <label htmlFor="scale-switch">Larger interface text</label>
-            <Switch
-              id="scale-switch"
-              checked={s.settings.largeUI}
-              onCheckedChange={(v) => setting('largeUI', v)}
-            />
-          </div>
-          <Button className="resume-button" onClick={() => pause(false)}>
-            <Play size={16} /> Back to the bench
-          </Button>
-          <button className="restart-link" onClick={() => setRestart(true)}>
-            <RotateCcw size={14} /> Restart recovery
-          </button>
-          <p className="audio-credit">
-            Original synthesized sound. No music. Just you and the ice.
-          </p>
+            <footer className="screen-footer">
+              <span>EVERY FITTING STAYS WITH YOU.</span>
+              <TactileButton
+                className="bench-return"
+                onClick={() => openMenu(null)}
+              >
+                Back to the bench <kbd>ESC</kbd>
+              </TactileButton>
+            </footer>
+          </section>
         </DialogContent>
       </Dialog>
-      <Dialog open={s.phase === 'completed'} onOpenChange={() => {}}>
-        <DialogContent className="completion-modal" showCloseButton={false}>
-          <div className="modal-symbol gold">
-            <Trophy size={30} />
+      <Dialog
+        open={s.phase === 'paused' && menu === 'settings' && !restart}
+        onOpenChange={(open) => {
+          if (!open && menuRef.current === 'settings') openMenu(null);
+        }}
+      >
+        <DialogContent
+          className={`station-screen settings-screen ${comfortClass}`}
+          unstyled
+          showCloseButton={false}
+        >
+          {navigation('settings')}
+          <section className="settings-drawer">
+            <span className="plate-eyebrow">BENCH PREFERENCES</span>
+            <DialogTitle>Settings</DialogTitle>
+            <DialogDescription>Make yourself comfortable.</DialogDescription>
+            <div className="settings-grid">
+              {(['master', 'effects', 'rotationSensitivity'] as const).map(
+                (key) => (
+                  <div className="setting-row" key={key}>
+                    <label id={`${key}-label`}>
+                      {key === 'master'
+                        ? 'Master volume'
+                        : key === 'effects'
+                          ? 'Sound effects'
+                          : 'Tray sensitivity'}
+                      <span>
+                        {key === 'rotationSensitivity'
+                          ? `${(0.5 + s.settings[key]).toFixed(2)}×`
+                          : `${Math.round(s.settings[key] * 100)}%`}
+                      </span>
+                    </label>
+                    <Slider
+                      aria-labelledby={`${key}-label`}
+                      value={[s.settings[key] * 100]}
+                      onValueChange={(v) =>
+                        setting(key, (Array.isArray(v) ? v[0] : v) / 100)
+                      }
+                    />
+                  </div>
+                ),
+              )}
+              {(
+                [
+                  ['muted', 'Mute audio'],
+                  ['toggle', 'Toggle to fire'],
+                  ['reducedParticles', 'Fewer particles'],
+                  ['reducedMotion', 'Reduced motion'],
+                  ['largeUI', 'Larger interface text'],
+                ] as const
+              ).map(([key, label]) => (
+                <div className="setting-switch" key={key}>
+                  <label htmlFor={`${key}-switch`}>
+                    {label}
+                    {key === 'toggle' && (
+                      <small>Click ice to start; click again to stop.</small>
+                    )}
+                  </label>
+                  <Switch
+                    id={`${key}-switch`}
+                    checked={s.settings[key]}
+                    onCheckedChange={(v) => setting(key, v)}
+                  />
+                </div>
+              ))}
+            </div>
+            <TactileButton
+              className="bench-return"
+              onClick={() => openMenu(null)}
+            >
+              Back to the bench <kbd>ESC</kbd>
+            </TactileButton>
+          </section>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={s.phase === 'paused' && (!menu || menu === 'pause') && !restart}
+        onOpenChange={(open) => {
+          if (!open && (!menuRef.current || menuRef.current === 'pause'))
+            openMenu(null);
+        }}
+      >
+        <DialogContent
+          className={`pause-menu ${comfortClass}`}
+          showCloseButton={false}
+        >
+          <span className="plate-eyebrow">FROZEN ASSETS</span>
+          <DialogTitle>Bench paused.</DialogTitle>
+          <DialogDescription>Your ice can wait.</DialogDescription>
+          <TactileButton
+            className="bench-return"
+            onClick={() => openMenu(null)}
+          >
+            Resume recovery <kbd>ESC</kbd>
+          </TactileButton>
+          <div className="pause-links">
+            <TactileButton onClick={() => openMenu('skills')}>
+              Skill Tree
+            </TactileButton>
+            <TactileButton onClick={() => openMenu('settings')}>
+              Settings
+            </TactileButton>
           </div>
-          <span className="eyebrow">ACCOUNT STATUS: UNFROZEN</span>
-          <DialogTitle className="completion-title">
-            All yours. Again.
-          </DialogTitle>
+          <div className="controls-guide">
+            <span>
+              HOLD ON ICE <b>Melt</b>
+            </span>
+            <span>
+              DRAG TRAY <b>Turn</b>
+            </span>
+            <span>
+              Q / E <b>Turn</b>
+            </span>
+            <span>
+              C <b>Center</b>
+            </span>
+            <span>
+              R <b>Free refill</b>
+            </span>
+            <span>
+              1 / 2 <b>Nozzles</b>
+            </span>
+          </div>
+          <p className="save-line">
+            {testing
+              ? 'Practice session. Your save is untouched.'
+              : s.saveStatus === 'unavailable'
+                ? 'Saving unavailable in this browser.'
+                : 'Progress saved on this device.'}
+          </p>
+          <TactileButton
+            className="restart-link"
+            onClick={() => setRestart(true)}
+          >
+            Restart recovery
+          </TactileButton>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={s.phase === 'completed' && !restart}
+        onOpenChange={() => {}}
+      >
+        <DialogContent
+          className={`completion-menu ${comfortClass}`}
+          showCloseButton={false}
+        >
+          <span className="plate-eyebrow">F/A — RECOVERY RECEIPT</span>
+          <span className="reclaimed-stamp">RECLAIMED</span>
+          <DialogTitle>All yours. Again.</DialogTitle>
           <DialogDescription>
-            You reclaimed the vault and every frozen asset along the way.
+            One vault. Twenty batches. Every frozen asset, back in your hands.
           </DialogDescription>
           <div className="completion-stats">
-            <div>
-              <span>RECOVERED VALUE</span>
-              <strong>${s.earned.toLocaleString()}</strong>
-            </div>
-            <div>
-              <span>VALUABLES FREED</span>
-              <strong>{s.recovered}</strong>
-            </div>
+            <span>
+              Recovered value<strong>{dollars(s.earned)}</strong>
+            </span>
+            <span>
+              Valuables freed<strong>{s.recovered}</strong>
+            </span>
           </div>
-          <Button
-            className="resume-button"
+          <TactileButton
+            className="bench-return"
             onClick={() => action((m) => m.continuePlaying())}
           >
-            Continue playing <ArrowUpRight size={17} />
-          </Button>
-          <button className="restart-link" onClick={() => setRestart(true)}>
-            <RotateCcw size={14} /> Start a fresh recovery
-          </button>
+            Continue playing <span>→</span>
+          </TactileButton>
+          <TactileButton
+            className="restart-link"
+            onClick={() => setRestart(true)}
+          >
+            Start a fresh recovery
+          </TactileButton>
         </DialogContent>
       </Dialog>
       <AlertDialog open={restart} onOpenChange={setRestart}>
-        <AlertDialogContent>
+        <AlertDialogContent className={`restart-menu ${comfortClass}`}>
           <AlertDialogTitle>Start from the first block?</AlertDialogTitle>
           <AlertDialogDescription>
-            This clears your recovered money, upgrades, and current ice. Your
-            sound and comfort settings stay.
+            This clears your money, upgrades, and current ice. Sound and comfort
+            settings stay.
           </AlertDialogDescription>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep playing</AlertDialogCancel>
