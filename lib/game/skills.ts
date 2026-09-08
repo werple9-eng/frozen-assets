@@ -10,26 +10,60 @@ export type SkillNode = {
   name: string;
   major?: boolean;
 };
-export const TREE = { width: 1840, height: 2580, rootX: 920, rootY: 2420 };
+export const NODE = {
+  width: 78,
+  height: 78,
+  majorWidth: 96,
+  majorHeight: 96,
+  gap: 84,
+  lane: 200,
+};
+export const TREE = { width: 1600, height: 2640, rootX: 800, rootY: 2400 };
+export function nodeBounds(n: SkillNode) {
+  const w = n.major ? NODE.majorWidth : NODE.width;
+  const h = n.major ? NODE.majorHeight : NODE.height;
+  return {
+    left: n.x - w / 2,
+    right: n.x + w / 2,
+    top: n.y - h / 2,
+    bottom: n.y + h / 2,
+  };
+}
+// Ports are outside the complete card, including all typography. Each branch
+// owns a lane; horizontal elbows stay in the empty gap between rows.
+export function connectionPoints(n: SkillNode) {
+  const parent = SKILLS.find((s) => s.id === n.parent);
+  const start = {
+    x: parent?.x ?? TREE.rootX,
+    y: parent ? nodeBounds(parent).top - 8 : TREE.rootY - 50,
+  };
+  const end = { x: n.x, y: nodeBounds(n).bottom + 8 };
+  return [start, end];
+}
+export function connectionPath(n: SkillNode) {
+  return connectionPoints(n)
+    .map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`)
+    .join(' ');
+}
 const names = {
-  heat: 'Heat',
-  tank: 'Fuel',
-  residual: 'Afterheat',
-  wide: 'Fan',
+  heat: 'More Heat',
+  tank: 'More Fuel',
+  residual: 'Lasting Warmth',
+  wide: 'Wider Flame',
 };
 const milestones: Record<string, string> = {
-  'heat-4': 'Focused flame',
-  'heat-8': 'Thermal pulse',
-  'heat-12': 'Crucible flame',
-  'tank-4': 'Fresh cylinder',
-  'tank-8': 'Reserve feed',
-  'tank-12': 'Deep reserve',
-  'residual-3': 'Stored warmth',
-  'residual-6': 'Heat sink',
-  'residual-9': 'Heat echo',
-  'wide-1': 'Fan nozzle',
-  'wide-5': 'Hot sweep',
-  'wide-9': 'Dual jet',
+  'heat-4': 'Steady Flame',
+  'heat-8': 'Heat Bursts',
+  'heat-12': 'Blazing Hot',
+  'tank-4': 'Free Top Up',
+  'tank-8': 'Rest and Refill',
+  'tank-12': 'Big Fuel Tank',
+  'residual-3': 'Warm Trail',
+  'residual-6': 'Stay Warm',
+  'residual-9': 'Spreading Warmth',
+  'wide-1': 'Wide Flame',
+  'wide-5': 'Hot Sweep',
+  'wide-9': 'Twin Flames',
 };
 export const SKILLS: SkillNode[] = (
   ['heat', 'residual', 'tank', 'wide'] as Upgrade[]
@@ -42,8 +76,11 @@ export const SKILLS: SkillNode[] = (
       key,
       level,
       parent: i ? `${key}-${i}` : 'torch',
-      x: 425 + branch * 330 + (i % 4 === 2 ? -75 : i % 4 === 3 ? 45 : 0),
-      y: 2210 - i * 182,
+      x:
+        400 +
+        (branch + (branch >= 2 ? 1 : 0)) * NODE.lane +
+        (i % 4 === 1 ? -55 : i % 4 === 3 ? 55 : 0),
+      y: 2280 - i * (NODE.majorHeight + NODE.gap),
       name: milestones[id] || `${names[key]} ${level}`,
       major: !!milestones[id],
     };
@@ -67,29 +104,24 @@ export function skillEffect(key: Upgrade, level: number) {
 }
 export function skillDescription(n: SkillNode) {
   const special: Record<string, string> = {
-    'heat-4': 'Hold on ice for 1.2s to build 20% extra heat.',
-    'heat-8': 'A thermal pulse chips the contact point every 1.5s.',
-    'heat-12': 'Four times starting heat, plus focus and thermal pulses.',
-    'tank-4': 'Every new batch tops up 20% of your tank for free.',
-    'tank-8': 'Recover 2 seconds of fuel each second while the torch rests.',
-    'tank-12': '260 seconds of fuel. New batches fill half your tank.',
-    'residual-3': 'Stored warmth keeps melting after you move the torch.',
-    'residual-6':
-      'Twice the stored heat. Sweep between spots and let them thaw.',
-    'residual-9':
-      'Heat echoes through a wider area when you release the torch.',
-    'wide-1': 'Unlock a broad fan. Switch freely between precision and fan.',
-    'wide-5': 'Fan penetration rises from 52% to 65% of precision heat.',
-    'wide-9': 'Dual jet: fan coverage with 80% of precision heat.',
+    'heat-4': 'Hold on one spot to make the flame hotter.',
+    'heat-8': 'Extra bursts of heat break the spot you are melting.',
+    'heat-12': 'Melt ice four times faster than your first flame.',
+    'tank-4': 'Each new block gives you a free fuel top up.',
+    'tank-8': 'Your fuel slowly fills while the torch rests.',
+    'tank-12': 'Carry more fuel and refill half the tank with each block.',
+    'residual-3': 'Ice keeps melting after you move the flame away.',
+    'residual-6': 'Leave twice as much warmth behind the flame.',
+    'residual-9': 'Warmth spreads farther when you let go.',
+    'wide-1': 'Switch to a wide flame to melt a bigger patch.',
+    'wide-5': 'Your wide flame melts deeper into the ice.',
+    'wide-9': 'Twin flames melt a wide patch almost as fast as a small one.',
   };
   if (special[n.id]) return special[n.id];
-  if (n.key === 'heat')
-    return `+${Math.round((HEAT[n.level] / HEAT[n.level - 1] - 1) * 100)}% heat. Melt the spot under your torch faster.`;
-  if (n.key === 'tank')
-    return `+${CAPACITY[n.level] - CAPACITY[n.level - 1]} seconds between refills. Refills are always free.`;
-  if (n.key === 'wide')
-    return `+${Math.round((FAN_RADIUS[n.level] ** 2 / FAN_RADIUS[n.level - 1] ** 2 - 1) * 100)}% fan area. Reach more ice in one sweep.`;
+  if (n.key === 'heat') return 'Melt the spot under your flame faster.';
+  if (n.key === 'tank') return 'Use the flame longer before you need a refill.';
+  if (n.key === 'wide') return 'Melt a bigger patch of ice in one sweep.';
   return n.level === 1
     ? 'Leave a little warmth behind as you move.'
-    : `+${Math.round((AFTERHEAT[n.level] / AFTERHEAT[n.level - 1] - 1) * 100)}% lingering heat. Keep melting after moving away.`;
+    : 'Keep melting the ice after moving the flame away.';
 }

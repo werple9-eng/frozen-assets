@@ -1,0 +1,633 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { GameModel } from '../lib/game/model';
+import { campaignField, campaignLoot } from '../lib/game/campaign-layout';
+import { StrikeCycle, strikePose } from '../lib/game/strike';
+import { ToolFollow } from '../lib/game/tool-follow';
+import { TreePan } from '../lib/game/pan';
+import { Quaternion, Vector3 } from 'three';
+import { IceField, surface } from '../lib/game/ice';
+import type { Loot } from '../lib/game/tuning';
+import { meshContactSamples } from '../lib/game/mesh-contact';
+import { Mesh, CylinderGeometry, MeshBasicMaterial } from 'three';
+import {
+  ALL_TOOL_NODES,
+  TOOL_TREES,
+  TOOL_ORDER,
+  MAP,
+  nodeState,
+  toolEffects,
+} from '../lib/game/tool-trees';
+import { TOOLS, blockSpec } from '../lib/game/campaign-content';
+
+void test('an active pre-overhaul claim keeps its layout and value until the next delivery', () => {
+  const m = new GameModel(),
+    c = m.campaign!;
+  m.round = c.state.block = 13;
+  c.state.layoutVersion = 1;
+  c.state.phase = 0;
+  m.field = campaignField(13, 0, undefined, 1);
+  m.loot = campaignLoot(13, 0, 1);
+  m.field.carveLoot(m.loot);
+  const p = m.field.points.find((_, i) => m.field.values[i] > 0.9)!;
+  m.field.melt(p, 0.2, 1, 1, 0);
+  const raw = JSON.parse(m.serialize());
+  delete raw.campaign.layoutVersion;
+  const n = new GameModel(JSON.stringify(raw));
+  assert.equal(n.saveStatus, 'saved');
+  assert.equal(n.campaign!.block.phases, blockSpec(13, 1).phases);
+  assert.deepEqual(
+    Array.from(n.field.values),
+    Array.from(new Float32Array(raw.ice)),
+  );
+  assert.deepEqual(
+    n.loot.map((t) => [t.id, t.value]),
+    m.loot.map((t) => [t.id, t.value]),
+  );
+  n.nextBlock();
+  assert.equal(n.campaign!.state.layoutVersion, 2);
+  assert.equal(n.campaign!.block.phases, blockSpec(14).phases);
+  assert.equal(new GameModel(n.serialize()).saveStatus, 'saved');
+});
+
+void test('heat echo follows gradual movement and fires once without a repeating chain', () => {
+  const m = new GameModel();
+  m.campaign!.unlock('thermal');
+  m.campaign!.state.pending = [];
+  m.nodes.thermal = ['TH-T1', 'TH-T2', 'TH-T3'];
+  m.loot = [];
+  const p = m.field.points.find((_, i) => m.field.values[i] > 0.9)!;
+  m.press();
+  for (let i = 0; i < 12; i++) m.update(0.02, { ...p, x: p.x + i * 0.06 });
+  assert.ok(
+    m.echoes.length > 0,
+    'slow pointer travel must accumulate into an echo',
+  );
+  m.release();
+  m.update(0.02, null);
+  m.stop();
+  for (let i = 0; i < 50; i++) m.update(0.02, null);
+  assert.equal(m.echoes.length, 0);
+  assert.equal(m.echoAnchor, null);
+});
+
+void test('six authored radial trees have exactly sixty distinct upgrades and unobstructed edges', () => {
+  assert.deepEqual(
+    TOOL_ORDER.map((t) => TOOL_TREES[t].length),
+    [8, 10, 10, 10, 10, 12],
+  );
+  assert.equal(new Set(ALL_TOOL_NODES.map((n) => n.id)).size, 60);
+  for (const tool of TOOL_ORDER) {
+    const list = TOOL_TREES[tool],
+      points = [{ id: 'root', x: MAP.rootX, y: MAP.rootY }, ...list];
+    assert.equal(
+      list.filter((n) => nodeState(n, []) === 'available').length,
+      4,
+    );
+    for (const a of points)
+      for (const b of points)
+        if (a !== b)
+          assert.ok(
+            Math.hypot(a.x - b.x, a.y - b.y) > 86,
+            `${tool}: ${a.id}/${b.id}`,
+          );
+    for (const n of list) {
+      const a = list.find((p) => n.parentIds.includes(p.id)) ?? points[0],
+        dx = n.x - a.x,
+        dy = n.y - a.y;
+      for (const other of points) {
+        if (other.id === a.id || other.id === n.id) continue;
+        const t = Math.max(
+          0,
+          Math.min(
+            1,
+            ((other.x - a.x) * dx + (other.y - a.y) * dy) / (dx * dx + dy * dy),
+          ),
+        );
+        assert.ok(
+          Math.hypot(other.x - a.x - dx * t, other.y - a.y - dy * t) > 43,
+          `${n.id} edge crosses ${other.id}`,
+        );
+      }
+    }
+  }
+});
+void test('authored purchases enforce tool ownership and prerequisites, persist independently, and remain completeable', () => {
+  const m = new GameModel();
+  m.money = m.earned = 500000;
+  m.campaign!.state.grossEarned = m.campaign!.state.netEarned = 500000;
+  assert.equal(m.purchaseNode('IP-P1', 1000), false);
+  assert.equal(m.purchaseNode('HC-P2', 1200), false);
+  m.campaign!.state.tools = [...TOOL_ORDER];
+  m.campaign!.state.pending = [];
+  const before = m.money;
+  assert.equal(m.purchaseNode('IP-P1', 1500), true);
+  assert.equal(m.toolId, 'hand');
+  assert.equal(m.fittings.power, 1);
+  assert.equal(m.purchaseNode('IP-P1', 1800), false);
+  assert.equal(
+    m.money,
+    before - ALL_TOOL_NODES.find((n) => n.id === 'IP-P1')!.cost,
+  );
+  let clock = 2000;
+  for (const n of ALL_TOOL_NODES)
+    if (!m.hasNode(n.id)) {
+      clock += 150;
+      assert.equal(m.purchaseNode(n.id, clock), true, n.id);
+    }
+  assert.equal(Object.values(m.nodes).flat().length, 60);
+  const restored = new GameModel(m.serialize());
+  assert.equal(restored.saveStatus, 'saved');
+  assert.deepEqual(restored.nodes, m.nodes);
+  assert.equal(restored.money, m.money);
+  const invalid = JSON.parse(m.serialize());
+  invalid.nodes.pick = ['IP-P2'];
+  assert.equal(new GameModel(JSON.stringify(invalid)).saveStatus, 'invalid');
+});
+void test('tool reveals follow read story, affordability fires once, and buying is a separate saved step', () => {
+  const m = new GameModel(),
+    c = m.campaign!,
+    t = TOOLS.find((t) => t.id === 'pick')!;
+  m.round = c.state.block = t.block;
+  m.field = campaignField(t.block);
+  m.loot = campaignLoot(t.block);
+  c.trigger('BLOCK_START');
+  m.checkTools();
+  assert.equal(m.revealedTools.includes('pick'), false);
+  assert.equal(m.buyTool('pick'), false);
+  c.openPhone();
+  m.checkTools();
+  assert.deepEqual(m.toolNotice, { tool: 'pick', kind: 'available' });
+  assert.equal(c.state.tools.includes('pick'), false);
+  m.dismissToolNotice();
+  m.checkTools();
+  assert.equal(m.toolNotice, null);
+  m.money = m.earned = t.cost;
+  c.state.grossEarned = c.state.netEarned = t.cost;
+  m.checkTools();
+  assert.equal(m.snapshot().toolNotice?.kind, 'ready');
+  m.dismissToolNotice();
+  m.money--;
+  m.checkTools();
+  m.money++;
+  m.checkTools();
+  assert.equal(m.toolNotice, null);
+  assert.equal(m.buyTool('pick'), true);
+  assert.equal(m.money, 0);
+  assert.equal(m.snapshot().toolNotice?.kind, 'acquired');
+  const n = new GameModel(m.serialize());
+  assert.equal(n.saveStatus, 'saved');
+  n.dismissToolNotice();
+  n.checkTools();
+  assert.equal(n.toolNotice, null);
+  assert.ok(n.campaign!.state.tools.includes('pick'));
+});
+void test('old tool levels migrate into authored nodes once without losing money, ice or existing benefits', () => {
+  const m = new GameModel();
+  m.campaign!.unlock('grip');
+  m.toolUpgrades.pick.heat = 7;
+  m.toolUpgrades.thermal.wide = 4;
+  m.toolUpgrades.thermal.residual = 6;
+  const raw = JSON.parse(m.serialize());
+  delete raw.treeRevision;
+  delete raw.nodes;
+  delete raw.revealedTools;
+  delete raw.toolNotices;
+  const n = new GameModel(JSON.stringify(raw));
+  assert.equal(n.saveStatus, 'saved');
+  assert.ok(n.hasNode('HC-S1'));
+  assert.ok(n.hasNode('IP-P1'));
+  assert.ok(n.hasNode('IP-P2'));
+  assert.ok(n.hasNode('TH-C1'));
+  assert.ok(n.hasNode('TH-T1'));
+  assert.equal(n.toolUpgrades.pick.heat, 7);
+  assert.equal(n.money, m.money);
+  assert.deepEqual(n.field.values, m.field.values);
+  const again = new GameModel(n.serialize());
+  assert.deepEqual(again.nodes, n.nodes);
+  assert.equal(again.money, n.money);
+});
+void test('chisel hits on its first update, hold is purchased, and a charged sledge cancels safely', () => {
+  const m = new GameModel(),
+    point = m.field.points.find((p, i) => m.field.values[i] > 0.9)!;
+  m.press();
+  m.update(1 / 240, point);
+  assert.equal(m.strikeSerial, 1);
+  assert.equal(m.firing, false);
+  m.nodes.hand = ['HC-S1'];
+  m.stop();
+  m.press();
+  for (let i = 0; i < 130; i++) m.update(1 / 120, point);
+  assert.ok(m.strikeSerial >= 3);
+  m.stop();
+  m.campaign!.unlock('sledge');
+  m.campaign!.state.pending = [];
+  m.nodes.sledge = ['SH-T1'];
+  const count = m.strikeSerial;
+  m.press();
+  for (let i = 0; i < 12; i++) m.update(0.05, point);
+  assert.equal(m.strikeSerial, count);
+  assert.ok(m.chargeTime > 0.5);
+  m.pause(true);
+  m.pause(false);
+  m.update(0.05, point);
+  assert.equal(m.chargeTime, 0);
+  assert.equal(m.strikeSerial, count);
+  m.press();
+  for (let i = 0; i < 13; i++) m.update(0.05, point);
+  m.release();
+  assert.ok(m.chargedPower > 1.9);
+  for (let i = 0; i < 10; i++) m.update(0.05, point);
+  assert.equal(m.strikeSerial, count + 1);
+});
+void test('real voxel damage responds to depth, center and weakened-ice techniques', () => {
+  const options = { center: 1, depth: 1, weak: 1, support: 1, detach: 1 };
+  const damage = (patch: Partial<typeof options>) => {
+    const f = campaignField(15),
+      point = { x: 0, y: 2.5, z: 0 };
+    f.values.fill(0.85);
+    const before = f.values.reduce((a, b) => a + b, 0);
+    f.strikeAt(point, 0.08, 2, { ...options, ...patch }, { x: 0, y: 1, z: 0 });
+    return before - f.values.reduce((a, b) => a + b, 0);
+  };
+  const base = damage({});
+  assert.ok(damage({ center: 1.3 }) > base);
+  assert.ok(damage({ depth: 1.2 }) > base);
+  assert.ok(damage({ weak: 1.35 }) > base * 1.3);
+  assert.ok(
+    toolEffects(['TH-P1', 'TH-P2', 'TH-S1', 'TH-S2', 'TH-T1', 'TH-T2'])
+      .power === 1.5,
+  );
+  const m = new GameModel();
+  assert.equal(m.selectBreakerBit('precision'), false);
+  m.nodes.breaker = ['PB-C1', 'PB-C2'];
+  assert.equal(m.selectBreakerBit('precision'), true);
+  assert.equal(m.breakerBit, 'precision');
+  assert.equal(m.selectBreakerBit('wide'), true);
+});
+
+void test('tool pages buy independently, enforce ownership and round-trip without changing equipped tool', () => {
+  const m = new GameModel();
+  m.campaign!.unlock('grip');
+  m.selectTool('hand');
+  m.money = m.earned = 1000;
+  m.campaign!.state.grossEarned = m.campaign!.state.netEarned = 1000;
+  assert.equal(m.purchaseSkill('heat-1', 1000, 'grip'), true);
+  assert.equal(m.toolId, 'hand');
+  assert.equal(m.upgrades.heat, 0);
+  assert.equal(m.toolUpgrades.grip.heat, 1);
+  assert.equal(m.purchaseSkill('heat-2', 1300, 'hand'), false);
+  assert.equal(m.purchaseSkill('heat-1', 1600, 'pick'), false);
+  assert.equal(m.money, 975);
+  m.toolUpgrades.thermal.tank = 3;
+  m.fuel = 100;
+  const restored = new GameModel(m.serialize());
+  assert.equal(restored.saveStatus, 'saved');
+  assert.deepEqual(restored.toolUpgrades, m.toolUpgrades);
+  assert.equal(restored.toolId, 'hand');
+  assert.equal(restored.fuel, 100);
+  restored.selectTool('grip');
+  assert.equal(restored.upgrades.heat, 1);
+  restored.restart();
+  assert.ok(
+    Object.values(restored.toolUpgrades).every((levels) =>
+      Object.values(levels).every((n) => n === 0),
+    ),
+  );
+});
+
+void test('shared-upgrade saves migrate once into independent tool trees without losing purchases', () => {
+  const m = new GameModel(),
+    old = JSON.parse(m.serialize());
+  delete old.toolUpgrades;
+  old.upgrades = { heat: 3, tank: 2, wide: 1, residual: 2 };
+  const migrated = new GameModel(JSON.stringify(old));
+  assert.equal(migrated.saveStatus, 'saved');
+  for (const levels of Object.values(migrated.toolUpgrades))
+    assert.deepEqual(levels, old.upgrades);
+  migrated.upgrades.heat++;
+  assert.equal(migrated.toolUpgrades.pick.heat, 3);
+  const again = new GameModel(migrated.serialize());
+  assert.equal(again.upgrades.heat, 4);
+  assert.equal(again.toolUpgrades.pick.heat, 3);
+  const invalid = JSON.parse(again.serialize());
+  invalid.toolUpgrades.pick.heat = -1;
+  assert.equal(new GameModel(JSON.stringify(invalid)).saveStatus, 'invalid');
+});
+
+void test('upgrading another tool cannot change a pick strike’s actual ice damage', () => {
+  const damage = (upgrade?: 'pick' | 'hand') => {
+    const m = new GameModel();
+    m.campaign!.state.pending = [];
+    m.campaign!.unlock('pick');
+    m.selectTool('pick');
+    m.money = 1000;
+    if (upgrade) assert.equal(m.purchaseSkill('heat-1', 1000, upgrade), true);
+    const before = m.field.values.reduce((a, b) => a + b, 0);
+    const point = m.field.points.find((_, i) => m.field.values[i] > 0.9)!;
+    m.press();
+    for (let i = 0; i < 15; i++) m.update(0.02, point);
+    return before - m.field.values.reduce((a, b) => a + b, 0);
+  };
+  const base = damage();
+  assert.ok(base > 0);
+  assert.equal(damage('hand'), base);
+  assert.ok(damage('pick') > base);
+});
+
+void test('rendered coin contact ignores empty corners and release responds on the edited frame', () => {
+  const m = new GameModel();
+  m.campaign!.state.pending = [];
+  const t = m.loot[0];
+  const mesh = new Mesh(
+    new CylinderGeometry(t.w / 2, t.w / 2, t.h, 32),
+    new MeshBasicMaterial(),
+  );
+  const samples = meshContactSamples(mesh, 0.08);
+  assert.ok(samples.length > 100);
+  assert.ok(samples.every((p) => Math.hypot(p.x, p.z) <= t.w / 2 + 0.0001));
+  m.contactSamples = () => samples;
+  m.update(0.001, null);
+  assert.equal(t.state, 'embedded');
+  m.field.values.fill(0);
+  m.field.revision++;
+  m.update(0.001, null);
+  assert.notEqual(
+    t.state,
+    'embedded',
+    'do not wait for the periodic connectivity timer',
+  );
+  assert.equal(t.credited, true);
+  const money = m.money;
+  m.update(0.001, null);
+  assert.equal(m.money, money);
+  mesh.geometry.dispose();
+  (mesh.material as MeshBasicMaterial).dispose();
+});
+
+void test('contact follows the rendered isosurface and nearby off-mesh ice cannot hold a coin', () => {
+  const field = new IceField(0, undefined, { scale: 1, shape: 'parcel' });
+  field.melt({ x: 0.7, y: 3, z: 0.5 }, 0.4, 3, 2);
+  const vertices = surface(field).positions;
+  for (let i = 0; i < vertices.length; i += 57) {
+    assert.ok(
+      Math.abs(
+        field.density(
+          { x: vertices[i], y: vertices[i + 1], z: vertices[i + 2] },
+          true,
+        ) - 0.5,
+      ) < 0.00001,
+    );
+  }
+  field.values.fill(0);
+  const corner = field.index(12, 6, 8),
+    center = field.points[field.index(11, 6, 7)];
+  const t: Loot = {
+    id: 'off-mesh',
+    kind: 'coin',
+    value: 1,
+    x: 0,
+    y: center.y,
+    z: 0,
+    w: 1.6,
+    h: 0.4,
+    d: 1.6,
+    state: 'embedded',
+    credited: false,
+    age: 0,
+    vy: 0,
+  };
+  const mesh = new Mesh(
+    new CylinderGeometry(0.8, 0.8, 0.4, 32),
+    new MeshBasicMaterial(),
+  );
+  const points = meshContactSamples(mesh, 0.06);
+  field.values[corner] = 0.51;
+  assert.equal(field.canRelease(t, points), true);
+  field.values[field.index(11, 6, 7)] = 1;
+  assert.equal(field.canRelease(t, points), false);
+  mesh.geometry.dispose();
+  (mesh.material as MeshBasicMaterial).dispose();
+});
+
+void test('an air gap releases treasure while actual surrounding contact holds it', () => {
+  const field = new IceField(0, undefined, { scale: 1, shape: 'parcel' });
+  const t: Loot = {
+    id: 'gap-coin',
+    kind: 'coin',
+    value: 35,
+    x: 0,
+    y: 4.5,
+    z: 0,
+    w: 1.2,
+    h: 0.4,
+    d: 1.2,
+    state: 'embedded',
+    age: 0,
+    vy: 0,
+    credited: false,
+  };
+  assert.equal(field.canRelease(t), false, 'covered treasure stays embedded');
+  field.points.forEach((p, i) => {
+    if (p.y > 2) field.values[i] = 0;
+  });
+  const remaining = field.remaining();
+  assert.ok(remaining > 0);
+  assert.equal(
+    field.canRelease(t),
+    true,
+    'a distant ice shelf cannot suspend treasure',
+  );
+  assert.equal(
+    field.remaining(),
+    remaining,
+    'releasing does not erase the shelf',
+  );
+  const landing = field.landingHeight(t, 0.4);
+  assert.ok(
+    landing > 2 && landing < 3,
+    'a long frame still hits the real shelf',
+  );
+  field.values.fill(0);
+  assert.equal(
+    field.landingHeight(t, 0.4),
+    0.4,
+    'empty corridor ends at tray floor',
+  );
+});
+
+void test('unsupported treasure falls onto lower ice, credits once and keeps that ice intact', () => {
+  const m = new GameModel();
+  m.campaign!.state.pending = [];
+  m.loot = [{ ...m.loot[0], x: 0, y: 4.5, z: 0, w: 1.2, h: 0.4, d: 1.2 }];
+  m.field = new IceField(0, undefined, { scale: 1, shape: 'parcel' });
+  m.field.points.forEach((p, i) => {
+    if (p.y > 2) m.field.values[i] = 0;
+  });
+  const remaining = m.field.remaining(),
+    initial = m.money;
+  let impacts = 0,
+    landedAt = 0;
+  m.onImpact = (t) => {
+    impacts++;
+    landedAt = t.y;
+  };
+  for (let i = 0; i < 20; i++) m.update(0.05, null);
+  assert.ok(m.money > initial);
+  assert.equal(impacts, 1);
+  assert.ok(landedAt > 2 && landedAt < 3);
+  assert.equal(m.field.remaining(), remaining);
+  assert.equal(m.credit(m.loot[0]), false);
+});
+
+void test('pick impact is 210ms into a 525ms cycle, with one late buffered strike', () => {
+  const s = new StrikeCycle(),
+    p = { x: 1, y: 2, z: 3 };
+  s.request();
+  for (let i = 0; i < 20; i++)
+    assert.equal(s.update(0.01, false, p, 0.525), null);
+  assert.deepEqual(s.update(0.01, false, p, 0.525), p);
+  assert.equal(s.active, true);
+  assert.ok(Math.abs(strikePose(0.4).lift) < 1e-9);
+  s.request();
+  assert.equal(s.queued, false, 'early clicks do not queue');
+  for (let i = 0; i < 20; i++) s.update(0.01, false, p, 0.525);
+  for (let i = 0; i < 50; i++) s.request();
+  assert.equal(s.queued, true);
+  let hits = 1;
+  for (let i = 0; i < 200; i++) if (s.update(0.01, false, p, 0.525)) hits++;
+  assert.equal(hits, 2);
+  assert.equal(s.active, false);
+});
+void test('held strikes keep cadence across frame rates and cancellation discards the buffer', () => {
+  for (const hz of [30, 60, 144, 240]) {
+    const s = new StrikeCycle(),
+      times: number[] = [];
+    for (let i = 0; i < hz * 3; i++)
+      if (s.update(1 / hz, true, { x: 0, y: 0, z: 0 }, 0.525))
+        times.push((i + 1) / hz);
+    assert.ok(Math.abs(times[0] - 0.21) <= 1 / hz + 0.0001);
+    for (let i = 1; i < times.length; i++)
+      assert.ok(Math.abs(times[i] - times[i - 1] - 0.525) <= 1 / hz + 0.0001);
+    s.request();
+    s.cancel();
+    assert.equal(s.update(0.05, false, { x: 0, y: 0, z: 0 }, 0.525), null);
+  }
+});
+void test('real pick damage and effects share the impact frame; pause and reload cancel anticipation', () => {
+  const m = new GameModel();
+  m.campaign!.state.pending = [];
+  m.campaign!.unlock('pick');
+  const p = m.field.points.find((_, i) => m.field.values[i] > 0.9)!;
+  const sum = () => m.field.values.reduce((a, b) => a + b, 0),
+    before = sum();
+  let bursts = 0,
+    sounds = 0;
+  m.onBurst = () => bursts++;
+  m.onSound = () => sounds++;
+  m.press();
+  m.release();
+  for (let i = 0; i < 20; i++) m.update(0.01, p);
+  assert.equal(sum(), before);
+  assert.equal(bursts, 0);
+  assert.equal(sounds, 0);
+  m.update(0.01, p);
+  assert.ok(sum() < before);
+  assert.equal(bursts, 2);
+  assert.equal(sounds, 1);
+  assert.equal(m.strikeSerial, 1);
+  m.stop();
+  m.press();
+  m.update(0.05, p);
+  const n = new GameModel(m.serialize());
+  assert.equal(n.strike.active, false);
+  const checkpoint = m.serialize();
+  m.restore(checkpoint);
+  assert.equal(
+    m.strike.active,
+    false,
+    'loading into an existing model also cancels the committed swing',
+  );
+  const after = sum();
+  m.pause(true);
+  m.pause(false);
+  for (let i = 0; i < 80; i++) m.update(0.01, p);
+  assert.equal(sum(), after);
+});
+void test('tool follow bounds topology jumps and surface rotation, then converges', () => {
+  const f = new ToolFollow();
+  f.followPosition(1 / 60);
+  f.targetPosition.set(8, 0, 0);
+  f.targetNormal.set(1, 0, 0);
+  f.targetRotation.setFromAxisAngle(new Vector3(0, 1, 0), Math.PI);
+  const q = new Quaternion();
+  f.followPosition(1 / 60);
+  f.followRotation(1 / 60);
+  assert.ok(f.displayPosition.x > 0 && f.displayPosition.x < 8);
+  assert.ok(f.smoothedNormal.angleTo(new Vector3(0, 1, 0)) <= 10 / 60 + 0.001);
+  assert.ok(f.displayRotation.angleTo(q) <= 14 / 60 + 0.001);
+  for (let i = 0; i < 180; i++) {
+    f.followPosition(1 / 60);
+    f.followRotation(1 / 60);
+  }
+  assert.ok(f.displayPosition.distanceTo(f.targetPosition) < 0.001);
+  assert.ok(f.displayRotation.angleTo(f.targetRotation) < 0.001);
+});
+void test('regrabbing stops map coast immediately and gentle release travels less', () => {
+  const fast = new TreePan(),
+    slow = new TreePan();
+  for (const [p, dx] of [
+    [fast, 25],
+    [slow, 2],
+  ] as const) {
+    p.begin();
+    p.drag(dx, 0, 0.02);
+    p.end();
+  }
+  for (let i = 0; i < 10; i++) {
+    fast.update(0.016);
+    slow.update(0.016);
+  }
+  assert.ok(fast.x > slow.x * 3);
+  fast.begin();
+  const x = fast.x;
+  for (let i = 0; i < 30; i++) fast.update(0.016);
+  assert.equal(fast.x, x);
+  assert.equal(fast.vx, 0);
+});
+void test('completed faster-than-expected call cannot redeliver; stale Next is ignored and saved duplicates are repaired', () => {
+  const m = new GameModel(),
+    c = m.campaign!;
+  c.state.block = m.round = 2;
+  c.state.pending = [];
+  c.trigger('BLOCK_START');
+  c.deliver();
+  m.answerPhone();
+  m.field = campaignField(2);
+  m.loot = campaignLoot(2);
+  m.field.carveLoot(m.loot);
+  const id = m.liveCall!.id;
+  assert.equal(id, 'ch1.more:0');
+  m.advanceCall(id);
+  assert.equal(m.advanceCall(id), false);
+  assert.equal(m.liveCall!.id, 'ch1.more:1');
+  c.state.pending.push('ch1.more');
+  const n = new GameModel(m.serialize());
+  assert.notEqual(n.saveStatus, 'invalid');
+  assert.equal(n.campaign!.state.pending.length, 0);
+  n.advanceCall(n.liveCall!.id);
+  assert.ok(n.campaign!.state.read.includes('ch1.more'));
+  n.campaign!.state.pending.push('ch1.more');
+  n.campaign!.deliver();
+  assert.equal(n.phoneRinging, false);
+  for (let i = 0; i < 200; i++) n.update(0.05, null);
+  assert.equal(n.liveCall, null);
+});
+void test('gameplay zoom round-trips and old saves use the neutral view', () => {
+  const m = new GameModel();
+  m.setSetting('gameplayZoom', 0.84);
+  assert.equal(new GameModel(m.serialize()).settings.gameplayZoom, 0.84);
+  const raw = JSON.parse(m.serialize());
+  delete raw.settings.gameplayZoom;
+  assert.equal(new GameModel(JSON.stringify(raw)).settings.gameplayZoom, 0.5);
+});

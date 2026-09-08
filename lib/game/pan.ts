@@ -29,12 +29,14 @@ export class TreePan {
       -1700,
       Math.min(1700, this.vy * 0.4 + (dy / elapsed) * 0.6),
     );
-    this.clamp();
+    // Soft resistance while held; the spring brings any excess home on release.
+    this.x = Math.max(this.minX - 55, Math.min(this.maxX + 55, this.x));
+    this.y = Math.max(this.minY - 55, Math.min(this.maxY + 55, this.y));
   }
   end(reduced = false) {
     this.dragging = false;
-    this.vx *= reduced ? 0 : 0.4;
-    this.vy *= reduced ? 0 : 0.4;
+    this.vx *= reduced ? 0 : 0.78;
+    this.vy *= reduced ? 0 : 0.78;
   }
   cancel() {
     this.dragging = false;
@@ -43,11 +45,16 @@ export class TreePan {
   update(dt: number) {
     if (this.dragging) return;
     dt = Math.min(0.033, Math.max(0, dt));
-    this.vx *= Math.exp(-dt * 10);
-    this.vy *= Math.exp(-dt * 10);
+    this.vx *= Math.exp(-dt * 18);
+    this.vy *= Math.exp(-dt * 18);
+    const dx = Math.max(this.minX, Math.min(this.maxX, this.x)) - this.x;
+    const dy = Math.max(this.minY, Math.min(this.maxY, this.y)) - this.y;
+    if (dx) this.vx += (dx * 230 - this.vx * 19) * dt;
+    if (dy) this.vy += (dy * 230 - this.vy * 19) * dt;
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    this.clamp();
+    if (Math.abs(dx) < 0.02 && Math.abs(this.vx) < 0.5) this.x += dx;
+    if (Math.abs(dy) < 0.02 && Math.abs(this.vy) < 0.5) this.y += dy;
     if (Math.abs(this.vx) < 0.5) this.vx = 0;
     if (Math.abs(this.vy) < 0.5) this.vy = 0;
   }

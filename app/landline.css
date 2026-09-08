@@ -1,0 +1,411 @@
+/* Authored calls, work tasks, and the paper archive are distinct surfaces. */
+.kinetic-word,
+.map-node .kinetic-word {
+  white-space: normal;
+}
+.button-word,
+.spoken-word {
+  display: inline-block;
+  white-space: nowrap;
+}
+.kinetic-letter,
+.spoken-glyph {
+  font-kerning: none;
+}
+.tactile-face {
+  overflow: visible;
+}
+.live-dialogue.tony-panel {
+  width: min(86vw, 1380px);
+  min-height: 28dvh;
+  bottom: 24px;
+  padding: 26px 40px 20px;
+}
+.live-dialogue.tony-panel header strong {
+  font-size: 42px;
+}
+.live-dialogue.tony-panel .tony-text {
+  font-size: clamp(27px, 2.45vw, 39px);
+  line-height: 1.3;
+  font-weight: 550;
+  margin: 18px 0 20px;
+}
+.live-dialogue.tony-panel footer {
+  justify-content: center;
+  position: relative;
+  min-height: 58px;
+}
+.live-dialogue .dialogue-read-hint {
+  position: absolute;
+  left: 0;
+  font-size: 9px;
+}
+.live-dialogue .tony-continue {
+  min-width: 170px;
+  min-height: 56px;
+  font: 900 30px/1 var(--display-type);
+  padding: 12px 24px;
+}
+.bank-call {
+  background: linear-gradient(110deg, #393b45, #222b36);
+  border-color: #b6bbcf;
+  border-top-color: #e0d7c0;
+}
+.bank-call header {
+  color: #e0d7c0;
+}
+.current-task,
+.incoming-call {
+  position: absolute;
+  z-index: 36;
+  bottom: 28px;
+  left: 50%;
+  translate: -50% 0;
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 28px;
+  background: #23372fee;
+  color: #ede4c9;
+  border: 1px solid #9daa84;
+  box-shadow: 0 6px #14271e;
+  animation: task-unfold 280ms var(--motion-spring) both;
+}
+.current-task small,
+.incoming-call small {
+  font: 600 10px var(--bench-type);
+  letter-spacing: 2px;
+  color: #b9c5b0;
+}
+.current-task strong {
+  font: 900 27px var(--display-type);
+  white-space: nowrap;
+}
+.incoming-call {
+  flex-direction: column;
+  gap: 7px;
+  min-width: 340px;
+}
+.incoming-call button {
+  font: 900 34px var(--display-type);
+  padding: 12px 25px;
+}
+.incoming-call kbd {
+  font: 11px var(--bench-type);
+  margin-left: 20px;
+}
+@keyframes task-unfold {
+  from {
+    transform: translateY(22px) scaleY(0.7);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.phone-dial {
+  position: absolute;
+  z-index: 40;
+  bottom: 24px;
+  left: 50%;
+  translate: -50% 0;
+  width: min(360px, 92vw);
+  padding: 24px;
+  text-align: center;
+  background: #b8b59b;
+  border: 8px solid #525e4d;
+  color: #202d28;
+  box-shadow: 0 10px #15241c;
+}
+.phone-dial h2 {
+  font: 900 28px var(--display-type);
+  margin: 12px 0;
+  min-height: 35px;
+}
+.phone-dial > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.phone-dial > div button {
+  min-height: 52px;
+  min-width: 0;
+  background: #3b493f;
+  color: #f1e6c5;
+  font-size: 24px;
+}
+.phone-dial button > .tactile-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+.phone-dial > .bench-return {
+  min-width: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 26px;
+  min-height: 56px;
+  margin: 16px auto 0;
+}
+.files-shortcut {
+  position: absolute;
+  left: calc(var(--phone-x, 20vw) + 10px);
+  bottom: 120px;
+  z-index: 20;
+  background: #b7a36d;
+  color: #17291e;
+  padding: 14px 20px;
+  font: 900 24px var(--display-type);
+}
+.game-shell > .files-shortcut {
+  left: 5%;
+  bottom: 185px;
+}
+.game-shell:has(.incoming-call) > .phone-shortcut,
+.game-shell:has(.incoming-call) > .files-shortcut,
+.game-shell:has(.live-dialogue) > .phone-shortcut,
+.game-shell:has(.live-dialogue) > .files-shortcut,
+.game-shell:has(.phone-dial) > .phone-shortcut,
+.game-shell:has(.phone-dial) > .files-shortcut {
+  display: none;
+}
+.campaign-caption {
+  left: 50%;
+  top: 112px;
+  translate: -50% 0;
+  width: max-content;
+  max-width: 88vw;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  font-size: 16px;
+  background: #1a2b24cc;
+  padding: 7px 14px;
+}
+.campaign-caption small {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+  max-width: 480px;
+}
+.files-shortcut kbd {
+  font: 12px var(--bench-type);
+  margin-left: 12px;
+}
+.phone-screen {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 24px;
+}
+.phone-screen .phone-body {
+  width: 100%;
+  max-width: 1100px;
+  min-width: 0;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+.phone-screen .phone-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+.phone-screen .phone-tabs > button {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 240px;
+  margin: 0;
+  font-size: 25px;
+}
+.phone-screen .phone-tabs > .read-instantly {
+  flex: 0 1 180px;
+  font-size: 17px;
+}
+.phone-screen .message-history {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 20px 24px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+.phone-screen .history-section {
+  width: 100%;
+  min-width: 0;
+}
+.phone-screen .message {
+  max-width: 100%;
+  box-sizing: border-box;
+  font-size: 23px;
+  overflow-wrap: break-word;
+}
+.phone-screen > .bench-return {
+  flex-shrink: 0;
+  max-width: calc(100vw - 64px);
+  min-height: 82px;
+}
+.phone-screen .phone-header h2 {
+  font-size: 56px !important;
+}
+.text-speed-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+.text-speed-options button {
+  min-width: 0;
+  padding: 12px 4px;
+  font-size: 17px;
+  background: #23332d;
+  min-height: 48px;
+}
+.text-speed-options button[aria-pressed='true'] {
+  background: #778568;
+  color: #fff4cd;
+}
+.dot-cursor i,
+.dot-cursor[data-kind='ui'] i,
+.dot-cursor[data-kind='ice'] i {
+  width: 12px;
+  height: 12px;
+  border: 1.4px solid #f4efdf;
+  background: transparent;
+  box-shadow: 0 0 2px #152019;
+}
+.dot-cursor[data-kind='ui'] i {
+  width: 15px;
+  height: 15px;
+}
+.dot-cursor[data-kind='ice'] i {
+  width: 10px;
+  height: 10px;
+}
+.dot-cursor[data-down='true'] i {
+  width: 13px;
+  height: 7px;
+  background: transparent;
+}
+.game-shell[data-tutorial='0'] > .hud-top,
+.game-shell:has(.live-dialogue) > .control-rail {
+  display: none;
+}
+.skill-screen .live-dialogue {
+  position: fixed;
+  bottom: 112px;
+  min-height: 28dvh;
+}
+.skill-screen:has(.live-dialogue) .tutorial-upgrade {
+  transform: translateY(-36px) scale(0.86);
+  transform-origin: 50% 0;
+}
+.skill-screen .current-task {
+  bottom: 108px;
+}
+@media (max-width: 850px) {
+  .live-dialogue.tony-panel {
+    width: 92vw;
+    padding: 20px 26px;
+    min-height: 29dvh;
+  }
+  .live-dialogue.tony-panel header strong {
+    font-size: 34px;
+  }
+  .live-dialogue.tony-panel .tony-text {
+    font-size: 25px;
+  }
+  .live-dialogue .dialogue-read-hint {
+    display: none;
+  }
+  .phone-screen .phone-header h2 {
+    font-size: 44px !important;
+  }
+  .phone-screen .phone-tabs > button {
+    font-size: 21px;
+    flex-basis: 180px;
+  }
+  .phone-screen .phone-tabs > .read-instantly {
+    flex-basis: 130px;
+    font-size: 15px;
+  }
+  .files-shortcut {
+    left: 24px;
+    bottom: 112px;
+  }
+}
+@media (max-width: 550px) {
+  .live-dialogue.tony-panel {
+    width: 94vw;
+    padding: 16px 20px;
+    bottom: 18px;
+  }
+  .live-dialogue.tony-panel .tony-text {
+    font-size: 21px;
+    margin: 12px 0;
+  }
+  .live-dialogue.tony-panel header strong {
+    font-size: 30px;
+  }
+  .live-dialogue .tony-continue {
+    min-height: 48px;
+    font-size: 26px;
+  }
+  .current-task {
+    width: 92vw;
+    gap: 12px;
+    padding: 14px;
+  }
+  .current-task strong {
+    font-size: 23px;
+  }
+  .phone-screen {
+    padding: 0 12px;
+  }
+  .phone-screen .phone-body {
+    padding: 0;
+  }
+  .phone-screen .phone-tabs {
+    gap: 8px;
+  }
+  .phone-screen .phone-tabs > button {
+    flex-basis: 140px;
+    font-size: 18px;
+    min-height: 56px;
+  }
+  .phone-screen .phone-tabs > .read-instantly {
+    flex-basis: 100%;
+    min-height: 40px;
+  }
+  .phone-screen .message-history {
+    padding: 12px 8px;
+  }
+  .phone-screen .message {
+    font-size: 20px;
+  }
+  .phone-screen .phone-header h2 {
+    font-size: 38px !important;
+  }
+  .skill-screen .live-dialogue {
+    bottom: 112px;
+  }
+  .incoming-call {
+    min-width: 0;
+    width: 90vw;
+  }
+  .incoming-call button {
+    font-size: 28px;
+  }
+}
+.large-ui .live-dialogue .tony-text {
+  font-size: clamp(29px, 2.6vw, 42px);
+}
+@media (max-width: 550px) {
+  .large-ui .live-dialogue .tony-text {
+    font-size: 23px;
+  }
+}

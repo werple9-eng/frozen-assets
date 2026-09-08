@@ -7,15 +7,95 @@ export class GameAudio {
   filter?: BiquadFilterNode;
   sources: AudioBufferSourceNode[] = [];
   voices = 0;
+  letterVoices = 0;
+  lettersPlayed = 0;
   active = false;
   masterVolume = 0.65;
   effects = 0.7;
   muted = false;
   wood?: AudioBuffer;
   materials = new Map<string, AudioBuffer[]>();
+  ambience?: GainNode;
+  ambienceFilter?: BiquadFilterNode;
+  roomBeat = -1;
   lastUI = -Infinity;
   uiPlayed = 0;
   uiSuppressed = 0;
+  ringBuffer?: AudioBuffer;
+  ringSource?: AudioBufferSourceNode;
+  stopRing() {
+    try {
+      this.ringSource?.stop();
+    } catch {
+      /* already ended */
+    }
+    this.ringSource = undefined;
+  }
+  ring() {
+    if (!this.ctx || !this.master || this.muted || this.ctx.state !== 'running')
+      return;
+    const ctx = this.ctx;
+    if (!this.ringBuffer) {
+      this.ringBuffer = ctx.createBuffer(
+        1,
+        Math.ceil(ctx.sampleRate * 1.65),
+        ctx.sampleRate,
+      );
+      const data = this.ringBuffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / ctx.sampleRate,
+          segment = t < 0.62 ? t : t - 0.94;
+        if (segment < 0 || segment > 0.62) continue;
+        const envelope =
+          Math.min(1, segment / 0.012) * Math.min(1, (0.62 - segment) / 0.04);
+        data[i] =
+          envelope *
+          (0.45 + 0.55 * Math.sin(t * 2 * Math.PI * 23) ** 2) *
+          (Math.sin(t * 2 * Math.PI * 480) * 0.18 +
+            Math.sin(t * 2 * Math.PI * 620) * 0.12 +
+            Math.sin(t * 2 * Math.PI * 960) * 0.035);
+      }
+    }
+    this.stopRing();
+    const src = ctx.createBufferSource(),
+      gain = ctx.createGain();
+    src.buffer = this.ringBuffer;
+    gain.gain.value = this.effects * 0.46;
+    src.connect(gain);
+    gain.connect(this.master);
+    src.start();
+    this.ringSource = src;
+    src.onended = () => {
+      src.disconnect();
+      gain.disconnect();
+      if (this.ringSource === src) this.ringSource = undefined;
+    };
+  }
+  dial(key: string) {
+    this.init();
+    if (this.muted || !this.ctx || !this.master) return;
+    const index = '123456789*0#'.indexOf(key);
+    if (index < 0) return;
+    const t = this.ctx.currentTime;
+    for (const hz of [
+      [697, 770, 852, 941][Math.floor(index / 3)],
+      [1209, 1336, 1477][index % 3],
+    ]) {
+      const o = this.ctx.createOscillator(),
+        g = this.ctx.createGain();
+      o.frequency.value = hz;
+      g.gain.setValueAtTime(0.022 * this.effects, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      o.connect(g);
+      g.connect(this.master);
+      o.start(t);
+      o.stop(t + 0.13);
+      o.onended = () => {
+        o.disconnect();
+        g.disconnect();
+      };
+    }
+  }
   init() {
     if (this.ctx) {
       void this.ctx.resume();
@@ -88,6 +168,20 @@ export class GameAudio {
       this.materials.set(kind, variants);
     }
     this.master = ctx.createGain();
+    const buzz = ctx.createBuffer(
+        1,
+        Math.floor(ctx.sampleRate * 0.22),
+        ctx.sampleRate,
+      ),
+      buzzData = buzz.getChannelData(0);
+    for (let i = 0; i < buzzData.length; i++) {
+      const t = i / ctx.sampleRate;
+      buzzData[i] =
+        Math.sin(t * 6.283 * 135) *
+        Math.sin((Math.PI * t) / 0.22) ** 2 *
+        (0.22 + 0.06 * Math.sin(t * 6.283 * 39));
+    }
+    this.materials.set('phone', [buzz]);
     this.master.gain.value = this.muted ? 0 : this.masterVolume * this.effects;
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -15;
@@ -122,6 +216,19 @@ export class GameAudio {
         this.filter = filter;
       }
     }
+    const room = ctx.createBufferSource();
+    room.buffer = buffer;
+    room.loop = true;
+    this.ambienceFilter = ctx.createBiquadFilter();
+    this.ambienceFilter.type = 'lowpass';
+    this.ambienceFilter.frequency.value = 165;
+    this.ambience = ctx.createGain();
+    this.ambience.gain.value = 0.035;
+    room.connect(this.ambienceFilter);
+    this.ambienceFilter.connect(this.ambience);
+    this.ambience.connect(this.master);
+    room.start();
+    this.sources.push(room);
     this.volume();
     // Filtered jsfxr noise adds only a dry mechanical latch to purchase sounds.
     // Wood resonances remain the common hover/press voice. Cache once per session.
@@ -145,6 +252,26 @@ export class GameAudio {
         0.025,
       );
   }
+  room(time: number, paused: boolean, entering: number) {
+    if (!this.ctx || !this.ambience || !this.ambienceFilter) return;
+    const compressor = time % 39 > 29;
+    this.ambience.gain.setTargetAtTime(
+      (paused ? 0.018 : 0.036) * (1 - entering * 0.7) * (compressor ? 1.3 : 1),
+      this.ctx.currentTime,
+      0.25,
+    );
+    this.ambienceFilter.frequency.setTargetAtTime(
+      compressor ? 210 : 145,
+      this.ctx.currentTime,
+      0.5,
+    );
+    const beat = Math.floor(time / 19);
+    if (beat !== this.roomBeat) {
+      if (this.roomBeat >= 0 && !paused)
+        this.physical(beat % 2 ? 'tray' : 'chip', 0.07);
+      this.roomBeat = beat;
+    }
+  }
   fire(on: boolean, contact: boolean, wide = false) {
     if (!this.ctx) return;
     if (on && !this.active) this.sound('ignite');
@@ -161,7 +288,47 @@ export class GameAudio {
       0.06,
     );
   }
+  letter(character: string, weight = 1) {
+    if (
+      !this.ctx ||
+      this.ctx.state !== 'running' ||
+      !this.master ||
+      this.muted ||
+      !this.wood ||
+      !/[\p{L}\p{N}]/u.test(character)
+    )
+      return;
+    // The same cached wood sample, tiny and dry. No per-letter synthesis/filter.
+    const source = this.ctx.createBufferSource(),
+      gain = this.ctx.createGain();
+    source.buffer = this.wood;
+    source.playbackRate.value = 1.7 + (character.charCodeAt(0) % 7) * 0.07;
+    gain.gain.value = 0.024 * weight;
+    source.connect(gain);
+    gain.connect(this.master);
+    this.letterVoices++;
+    this.lettersPlayed++;
+    source.start();
+    source.stop(this.ctx.currentTime + 0.025);
+    source.onended = () => {
+      this.letterVoices--;
+      source.disconnect();
+      gain.disconnect();
+    };
+  }
   sound(kind: string, intensity = 1) {
+    if (kind === 'stamp') {
+      this.physical('tray', 0.85);
+      this.physical('cash', 0.5);
+      this.ui('press');
+      return;
+    }
+    if (kind === 'chisel' || kind === 'pick') {
+      this.physical('chip', intensity * (kind === 'pick' ? 0.95 : 0.65));
+      this.physical('coin', kind === 'pick' ? 0.14 : 0.085);
+      if (kind === 'pick') this.physical('crack', 0.2);
+      return;
+    }
     if (['purchase', 'unlock', 'unavailable'].includes(kind)) {
       this.ui(kind);
       if (kind !== 'unavailable')
@@ -266,17 +433,17 @@ export class GameAudio {
       return;
     const now = this.ctx.currentTime;
     if (
-      (!['purchase', 'unlock'].includes(kind) &&
-        now - this.lastUI < (kind === 'hover' ? 0.14 : 0.045)) ||
-      this.voices >=
-        (kind === 'hover' ? TUNE.audioVoices - 3 : TUNE.audioVoices)
+      kind !== 'hover' &&
+      ((!['purchase', 'unlock'].includes(kind) && now - this.lastUI < 0.045) ||
+        this.voices >= TUNE.audioVoices)
     ) {
       this.uiSuppressed++;
       return;
     }
-    this.lastUI = now;
+    if (kind !== 'hover') this.lastUI = now;
     this.uiPlayed++;
-    this.voices++;
+    // Hover entries overlap freely and never consume the gameplay voice pool.
+    if (kind !== 'hover') this.voices++;
     const src = this.ctx.createBufferSource(),
       gain = this.ctx.createGain();
     src.buffer = this.wood;
@@ -302,7 +469,7 @@ export class GameAudio {
     gain.connect(this.master);
     src.start();
     src.onended = () => {
-      this.voices--;
+      if (kind !== 'hover') this.voices--;
       src.disconnect();
       gain.disconnect();
     };

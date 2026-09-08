@@ -1,24 +1,56 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { IceField, surface } from './ice';
+import { meshContactSamples } from './mesh-contact';
 import { TrayRotation } from './rotation';
 import { GameAudio } from './audio';
 import { TUNE, type Loot, type Vec3 } from './tuning';
+import { Workshop } from './workshop';
+import { WorkshopAir } from './atmosphere';
+import { Spring, TOOL_MOTION } from './motion';
+import { ToolFollow } from './tool-follow';
+import { strikePose, type StrikeCycle } from './strike';
+import type { ToolId, StoryObjectId } from './campaign-content';
 export type SceneModel = {
+  contactSamples?: (t: Loot) => Vec3[] | undefined;
   field: IceField;
   loot: Loot[];
   firing: boolean;
   paused: boolean;
+  phase?: string;
   fuel: number;
   mode: string;
   heatLevel: number;
   residual: number;
   reducedParticles: boolean;
   toggle?: boolean;
-  settings?: { rotationSensitivity: number; reducedMotion: boolean };
+  thermal?: boolean;
+  toolId?: ToolId;
+  strikePulse?: number;
+  strikeSerial?: number;
+  strike?: StrikeCycle;
+  chargeTime?: number;
+  campaignScale?: number;
+  chapter?: number;
+  unread?: number;
+  phoneRinging?: boolean;
+  phoneOffHook?: boolean;
+  dialing?: boolean;
+  liveCall?: unknown;
+  storyObjects?: StoryObjectId[];
+  interactionBusy?: boolean;
+  campaign?: { state: { tools: ToolId[] } };
+  settings?: {
+    rotationSensitivity: number;
+    reducedMotion: boolean;
+    gameplayZoom?: number;
+  };
+  inTutorial?: boolean;
+  tutorial?: { step: number; stage: string; block: number; mode?: string };
   update: (dt: number, hit: Vec3 | null) => void;
   press: () => void;
   stop: () => void;
+  release?: () => void;
   emit: () => void;
 };
 type Particle = {
@@ -32,6 +64,38 @@ export class GameScene {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
   assembly = new THREE.Group();
+  contents = new THREE.Group();
+  delivery = new Spring(0, 170, 17);
+  recoil = new Spring(0, 330, 19);
+  swing = new Spring(0, 360, 21);
+  toolPresence = new Spring(0, 290, 23);
+  toolFollow = new ToolFollow();
+  cameraZoom = new Spring(1, 220, 30);
+  guardMatrix = new THREE.Matrix4();
+  guardScale = new THREE.Vector3();
+  lastToolPointer = new THREE.Vector2();
+  flameFlow = new Spring(0, 240, 29);
+  entry = new Spring(0, 95, 19);
+  surfaceBasis = new THREE.Matrix4();
+  toolOut = new THREE.Vector3(0, 1, 0);
+  toolAcross = new THREE.Vector3();
+  toolAlong = new THREE.Vector3();
+  toolRoll = new THREE.Quaternion();
+  toolGuard = new THREE.Vector3();
+  toolAxis = new THREE.Vector3(1, 0, 0);
+  previousStrike = 0;
+  deliveryLanded = true;
+  deliveryMass = 1;
+  deliveryFade = new Spring(1, 540, 48);
+  impactAge = 10;
+  iceImpact = {
+    point: { value: new THREE.Vector3() },
+    age: { value: 10 },
+    strength: { value: 0 },
+  };
+  particlePool: Particle[] = [];
+  fragmentGeometry = new THREE.IcosahedronGeometry(0.16, 0);
+  vaporGeometry = new THREE.SphereGeometry(0.025, 5, 4);
   turntable = new TrayRotation();
   rotateMode = false;
   spaceHeld = false;
@@ -56,6 +120,10 @@ export class GameScene {
   contact: THREE.Mesh;
   heatLight = new THREE.PointLight(0xffbc78, 0, 3);
   raycaster = new THREE.Raycaster();
+  revealRay = new THREE.Raycaster();
+  revealPoint = new THREE.Vector3();
+  revealScreen = new THREE.Vector3();
+  revealNdc = new THREE.Vector2();
   pointer = new THREE.Vector2(0.35, -0.05);
   aim = new THREE.Vector3(1, 1, 0.7);
   hasPointer = false;
@@ -70,12 +138,31 @@ export class GameScene {
   frames: number[] = [];
   renderTimes: number[] = [];
   scratch = new THREE.Vector3();
+  startup = {
+    created: performance.now(),
+    firstRender: 0,
+    interactiveReady: 0,
+    firstInput: 0,
+    firstStrike: 0,
+  };
+  workshop = new Workshop();
+  air = new WorkshopAir();
+  deck = new THREE.Group();
+  pedestal = new THREE.Group();
+  onOpenPhone: () => void = () => {};
+  onOpenFiles: () => void = () => {};
+  onDialKey: (key: string) => void = () => {};
+  ringClock = 0;
+  phoneFocus = { ringing: false, released: false, distance: Infinity };
+  messageBusy = false;
   plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.45);
   automation?: () => void;
   constructor(
     public host: HTMLElement,
     public model: SceneModel,
   ) {
+    model.contactSamples = (t) =>
+      this.lootMeshes.get(t.id)?.userData.contactSamples;
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
@@ -90,10 +177,10 @@ export class GameScene {
     this.renderer.toneMappingExposure = 0.95;
     this.renderer.domElement.setAttribute(
       'aria-label',
-      '3D recovery tray. Hold on ice to melt. Drag empty tray to turn. Q and E also turn.',
+      '3D recovery tray. Click with the starter chisel; hold with later equipment. Drag empty tray to turn. Q and E also turn.',
     );
     host.appendChild(this.renderer.domElement);
-    this.camera.position.set(1.3, 17, 29);
+    this.camera.position.set(1.3, 14.7, 29);
     this.camera.lookAt(0, 3.2, 0);
     this.camera.near = 0.1;
     this.camera.far = 70;
@@ -112,9 +199,9 @@ export class GameScene {
       near: 1,
       far: 55,
     });
-    key.shadow.normalBias = 0.025;
+    key.shadow.normalBias = 0.008;
     key.shadow.bias = -0.0002;
-    key.shadow.radius = 5;
+    key.shadow.radius = 2;
     key.shadow.blurSamples = 8;
     this.scene.add(key);
     const rim = new THREE.DirectionalLight(0xbcd7e2, 1.7);
@@ -128,23 +215,27 @@ export class GameScene {
     this.scene.add(
       this.box(45, 0.6, 40, this.deskMaterial(), 0, -0.8, 0, 0.12),
     );
-    const deck = new THREE.Group();
+    const deck = this.deck;
     deck.scale.set(TUNE.trayScale, 1, TUNE.trayScale);
     this.assembly.add(deck);
+    this.scene.add(this.workshop.group, this.workshop.hand);
+    this.scene.add(this.air.group);
+    this.scene.fog = new THREE.FogExp2(0x314039, 0.007);
     const pedestal = new THREE.Mesh(
       new THREE.CylinderGeometry(2.15, 2.45, 0.65, 64),
       dark,
     );
     pedestal.position.y = -0.16;
     pedestal.receiveShadow = true;
-    this.scene.add(pedestal);
+    this.pedestal.add(pedestal);
     const bearing = new THREE.Mesh(
       new THREE.TorusGeometry(2.13, 0.065, 8, 80),
       edge,
     );
     bearing.rotation.x = -Math.PI / 2;
     bearing.position.y = 0.19;
-    this.scene.add(bearing);
+    this.pedestal.add(bearing);
+    this.scene.add(this.pedestal);
     deck.add(this.box(7.35, 0.18, 5.4, dark, 0, -0.05, 0, 0.15));
     deck.add(this.box(7.12, 0.12, 5.18, tray, 0, 0.07, 0, 0.13));
     for (const x of [-3.5, 3.5])
@@ -236,7 +327,8 @@ export class GameScene {
     this.iceMaterial(this.ice.material as THREE.MeshPhysicalMaterial);
     this.ice.castShadow = true;
     this.ice.receiveShadow = true;
-    this.assembly.add(this.ice, this.lootGroup);
+    this.contents.add(this.ice, this.lootGroup);
+    this.assembly.add(this.contents);
     const steel = mat(0x63757b, 0.8, 0.28),
       brass = mat(0xc6a363, 0.7, 0.37),
       rubber = mat(0x334348, 0.05, 0.82);
@@ -298,6 +390,7 @@ export class GameScene {
     );
     this.scene.add(this.flame, this.core, this.contact, this.heatLight);
     this.bind();
+    this.startup.interactiveReady = performance.now();
     this.resize();
     this.syncField();
     this.animation = requestAnimationFrame(this.frame);
@@ -355,7 +448,312 @@ export class GameScene {
         metalness: 0.72,
         roughness: 0.27,
       });
-    if (t.kind === 'coin') {
+    // Deterministic silhouettes preserve saved reward IDs, values and physics.
+    const [batch, item] = t.id.split('-').map(Number);
+    const variant = t.variant ?? (batch + item) % 3;
+    const silver = new THREE.MeshStandardMaterial({
+      color: 0xc5d9df,
+      metalness: 0.88,
+      roughness: 0.23,
+    });
+    const enamel = new THREE.MeshStandardMaterial({
+      color: 0x285968,
+      metalness: 0.35,
+      roughness: 0.28,
+    });
+    if (t.story === 'ring') {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(t.d * 0.32, t.d * 0.07, 10, 32),
+        silver,
+      );
+      ring.rotation.x = Math.PI / 2;
+      g.add(ring);
+    } else if (t.story) {
+      const color =
+        t.story === 'hold'
+          ? 0x9d4438
+          : t.story === 'ledger'
+            ? 0x526468
+            : 0x9b9e91;
+      const mat = new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.6,
+        roughness: 0.45,
+      });
+      g.add(this.box(t.w, t.h, t.d, mat, 0, 0, 0, 0.04));
+      const label = this.label(
+        t.story === 'tag'
+          ? 'AP-7C-114'
+          : t.story === 'ledger'
+            ? 'FREEZE LEDGER'
+            : t.story === 'log'
+              ? 'EXCEPTION 7C'
+              : t.story === 'access'
+                ? 'SUBLEVEL B'
+                : 'DO NOT RELEASE',
+        512,
+        128,
+        '#ecdfb7',
+        '#334246',
+        36,
+      );
+      label.rotation.x = -Math.PI / 2;
+      label.position.y = t.h / 2 + 0.015;
+      label.scale.set(t.w * 0.92, t.d * 0.7, 1);
+      g.add(label);
+      if (t.story === 'ledger')
+        for (const x of [-0.4, 0.4])
+          g.add(
+            this.box(t.w * 0.09, t.h + 0.025, t.d, gold, t.w * x, 0, 0, 0.01),
+          );
+    } else if (variant >= 3) {
+      if (t.kind === 'coin' && variant === 4) {
+        g.add(this.box(t.w, t.h, t.d * 0.65, silver, 0, 0, 0, 0.04));
+        g.add(
+          this.box(t.w * 0.6, 0.018, t.d * 0.35, enamel, 0, t.h / 2, 0, 0.01),
+        );
+      } else if (t.kind === 'coin' && variant === 5) {
+        const medal = new THREE.Mesh(
+          new THREE.CylinderGeometry(t.w * 0.32, t.w * 0.32, t.h, 24),
+          gold,
+        );
+        medal.position.z = t.d * 0.15;
+        g.add(
+          medal,
+          this.box(
+            t.w * 0.38,
+            t.h * 0.3,
+            t.d * 0.7,
+            enamel,
+            0,
+            0,
+            -t.d * 0.25,
+            0.01,
+          ),
+        );
+      } else if (t.kind === 'coin') {
+        for (let i = 0; i < 4; i++) {
+          const roll = new THREE.Mesh(
+            new THREE.CylinderGeometry(t.d * 0.25, t.d * 0.25, t.h * 0.55, 16),
+            silver,
+          );
+          roll.position.set(
+            ((i % 2) - 0.5) * t.w * 0.45,
+            Math.floor(i / 2) * t.h * 0.4,
+            0,
+          );
+          g.add(roll);
+        }
+      } else if (t.kind === 'cash' && variant === 4) {
+        g.add(this.box(t.w, t.h, t.d, enamel, 0, 0, 0, 0.025));
+        for (let i = 0; i < 4; i++)
+          g.add(
+            this.box(
+              t.w * 0.82,
+              t.h * 0.07,
+              t.d * 0.8,
+              silver,
+              i * 0.018,
+              t.h * (0.22 + i * 0.1),
+              0,
+              0.005,
+            ),
+          );
+        g.add(
+          this.box(t.w * 0.45, t.h * 0.35, 0.025, gold, 0, 0, t.d / 2, 0.01),
+        );
+      } else if (t.kind === 'cash' && variant === 5) {
+        g.add(this.box(t.w, t.h * 0.35, t.d, silver, 0, 0, 0, 0.015));
+        g.add(
+          this.box(t.w * 0.13, t.h * 0.4, t.d, enamel, -t.w * 0.2, 0, 0, 0.01),
+        );
+        const seal = new THREE.Mesh(
+          new THREE.CylinderGeometry(t.d * 0.18, t.d * 0.18, t.h * 0.18, 12),
+          gold,
+        );
+        seal.position.set(t.w * 0.2, t.h * 0.25, t.d * 0.15);
+        g.add(seal);
+      } else if (t.kind === 'cash') {
+        g.add(this.box(t.w, t.h, t.d, enamel, 0, 0, 0, 0.04));
+        g.add(
+          this.box(
+            t.w * 0.8,
+            t.h * 0.15,
+            t.d * 0.75,
+            silver,
+            0,
+            t.h * 0.5,
+            0,
+            0.02,
+          ),
+        );
+        for (const x of [-0.25, 0.25])
+          g.add(
+            this.box(t.w * 0.1, t.h + 0.02, t.d, gold, x * t.w, 0, 0, 0.01),
+          );
+        const jewel = new THREE.Mesh(
+          new THREE.OctahedronGeometry(t.d * 0.22),
+          gold,
+        );
+        jewel.position.y = t.h * 0.65;
+        g.add(jewel);
+      } else if (variant === 4) {
+        g.add(this.box(t.w, t.h * 0.4, t.d, enamel, 0, -t.h * 0.2, 0, 0.04));
+        for (const x of [-0.25, 0, 0.25]) {
+          const jewel = new THREE.Mesh(
+            new THREE.OctahedronGeometry(t.d * 0.18),
+            x ? silver : gold,
+          );
+          jewel.position.set(x * t.w, t.h * 0.25, 0);
+          g.add(jewel);
+        }
+      } else if (variant === 5) {
+        g.add(this.box(t.w, t.h, t.d, enamel, 0, 0, 0, 0.035));
+        for (const x of [-0.4, 0.4])
+          g.add(
+            this.box(t.w * 0.12, t.h * 1.1, t.d, gold, x * t.w, 0, 0, 0.01),
+          );
+        g.add(
+          this.box(t.w * 0.45, t.h * 0.25, 0.025, silver, 0, 0, t.d / 2, 0.005),
+        );
+      } else {
+        for (let i = 0; i < 3; i++)
+          g.add(
+            this.box(
+              t.w * 0.7,
+              t.h * 0.3,
+              t.d * 0.6,
+              gold,
+              ((i % 2) - 0.5) * t.w * 0.15,
+              -t.h * 0.3 + i * t.h * 0.3,
+              0,
+              0.03,
+            ),
+          );
+      }
+    } else if (variant === 1 && t.kind === 'coin') {
+      const token = new THREE.Mesh(
+        new THREE.CylinderGeometry(t.w / 2, t.w / 2, t.h, 6),
+        silver,
+      );
+      g.add(token);
+      const seal = new THREE.Mesh(
+        new THREE.CylinderGeometry(t.w * 0.3, t.w * 0.3, t.h + 0.02, 6),
+        enamel,
+      );
+      g.add(seal);
+      g.add(
+        this.box(t.w * 0.08, t.h + 0.04, t.d * 0.45, silver, 0, 0, 0, 0.01),
+      );
+    } else if (variant === 2 && t.kind === 'coin') {
+      const washer = new THREE.Mesh(
+        new THREE.TorusGeometry(t.w * 0.33, t.w * 0.12, 8, 24),
+        silver,
+      );
+      washer.rotation.x = Math.PI / 2;
+      washer.scale.z = t.h / (t.w * 0.24);
+      g.add(washer);
+      for (let i = 0; i < 4; i++)
+        g.add(
+          this.box(
+            t.w * 0.12,
+            t.h,
+            t.d * 0.12,
+            gold,
+            Math.cos((i * Math.PI) / 2) * t.w * 0.34,
+            0,
+            Math.sin((i * Math.PI) / 2) * t.d * 0.34,
+            0.01,
+          ),
+        );
+    } else if (variant === 1 && t.kind === 'cash') {
+      const paper = new THREE.MeshStandardMaterial({
+        color: 0xd2b98d,
+        roughness: 0.95,
+      });
+      g.add(this.box(t.w, t.h * 0.55, t.d, paper, 0, 0, 0, 0.025));
+      const flap = this.box(
+        t.w * 0.65,
+        t.h * 0.15,
+        t.d * 0.6,
+        paper,
+        0,
+        t.h * 0.35,
+        0,
+        0.015,
+      );
+      flap.rotation.y = 0.32;
+      g.add(flap);
+      const seal = new THREE.Mesh(
+        new THREE.CylinderGeometry(t.d * 0.16, t.d * 0.17, t.h * 0.25, 12),
+        new THREE.MeshStandardMaterial({ color: 0x9d483a, roughness: 0.6 }),
+      );
+      seal.position.y = t.h * 0.48;
+      g.add(seal);
+    } else if (variant === 2 && t.kind === 'cash') {
+      const paper = new THREE.MeshStandardMaterial({
+        color: 0xd8ded0,
+        roughness: 0.9,
+      });
+      const roll = new THREE.Mesh(
+        new THREE.CylinderGeometry(t.h * 0.48, t.h * 0.48, t.w, 20),
+        paper,
+      );
+      roll.rotation.z = Math.PI / 2;
+      g.add(roll);
+      const strap = new THREE.Mesh(
+        new THREE.CylinderGeometry(t.h * 0.52, t.h * 0.52, t.w * 0.14, 20),
+        enamel,
+      );
+      strap.rotation.z = Math.PI / 2;
+      g.add(strap);
+    } else if (variant === 1 && t.kind === 'gold') {
+      g.add(this.box(t.w * 0.8, t.h * 0.35, t.d * 0.46, gold, 0, 0, 0, 0.07));
+      const watch = new THREE.Mesh(
+        new THREE.CylinderGeometry(t.d * 0.46, t.d * 0.46, t.h * 0.7, 32),
+        gold,
+      );
+      watch.position.y = t.h * 0.15;
+      g.add(watch);
+      const dial = new THREE.Mesh(
+        new THREE.CylinderGeometry(t.d * 0.36, t.d * 0.36, 0.025, 32),
+        enamel,
+      );
+      dial.position.y = t.h * 0.52;
+      g.add(dial);
+      g.add(this.box(0.035, 0.03, t.d * 0.48, gold, 0, t.h * 0.55, 0, 0.005));
+      g.add(
+        this.box(
+          t.d * 0.28,
+          0.03,
+          0.035,
+          gold,
+          t.d * 0.1,
+          t.h * 0.56,
+          0,
+          0.005,
+        ),
+      );
+    } else if (variant === 2 && t.kind === 'gold') {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(t.d * 0.31, t.d * 0.085, 10, 32),
+        gold,
+      );
+      ring.rotation.x = Math.PI / 2;
+      g.add(ring);
+      const gem = new THREE.Mesh(
+        new THREE.OctahedronGeometry(t.h * 0.48),
+        new THREE.MeshStandardMaterial({
+          color: 0x96e5e9,
+          metalness: 0.5,
+          roughness: 0.12,
+          emissive: 0x194a50,
+          emissiveIntensity: 0.3,
+        }),
+      );
+      gem.position.set(0, t.h * 0.27, -t.d * 0.28);
+      g.add(gem);
+    } else if (t.kind === 'coin') {
       g.add(
         new THREE.Mesh(
           new THREE.CylinderGeometry(t.w / 2, t.w / 2, t.h, 32),
@@ -431,18 +829,25 @@ export class GameScene {
         o.receiveShadow = true;
       }
     });
+    g.userData.contactSamples = meshContactSamples(
+      g,
+      (TUNE.step * TUNE.worldScale * (this.model.field.profile?.scale ?? 1)) /
+        4,
+    );
     g.position.set(t.x, t.y, t.z);
     g.rotation.y = t.kind === 'coin' ? 0.1 : -0.12 + t.x * 0.05;
     this.lootGroup.add(g);
     this.lootMeshes.set(t.id, g);
   }
   syncField() {
-    if (this.oldField !== this.model.field) {
+    const delivered = this.oldField !== this.model.field;
+    if (delivered) {
       for (const g of this.lootMeshes.values()) this.disposeObject(g);
       this.lootGroup.clear();
       this.lootMeshes.clear();
       this.clearParticles();
       this.oldField = this.model.field;
+      this.deliver();
       for (const t of this.model.loot)
         if (t.state !== 'collected') this.makeLoot(t);
     }
@@ -455,8 +860,29 @@ export class GameScene {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(data.colors, 3));
     geo.computeVertexNormals();
     geo.computeBoundingSphere();
+    if (delivered && data.positions.length) {
+      geo.computeBoundingBox();
+      this.ice.userData.deliveryBounds = geo.boundingBox?.clone();
+    }
     this.ice.geometry.dispose();
     this.ice.geometry = geo;
+    // A visible cavity is distinct from physically freeing its supported find.
+    for (const t of this.model.loot) {
+      const g = this.lootMeshes.get(t.id);
+      if (!g || t.state !== 'embedded' || g.userData.revealedAt) continue;
+      this.contents.localToWorld(this.revealPoint.set(t.x, t.y, t.z));
+      this.revealScreen.copy(this.revealPoint).project(this.camera);
+      this.revealNdc.set(this.revealScreen.x, this.revealScreen.y);
+      this.revealRay.setFromCamera(this.revealNdc, this.camera);
+      const front = this.revealRay.intersectObject(this.ice, false)[0];
+      if (
+        !front ||
+        front.distance >
+          this.revealRay.ray.origin.distanceTo(this.revealPoint) -
+            Math.min(t.w, t.h) * 0.45
+      )
+        g.userData.revealedAt = performance.now() / 1000;
+    }
   }
   deskMaterial() {
     const mat = new THREE.MeshStandardMaterial({
@@ -481,6 +907,9 @@ export class GameScene {
     // Procedural frost and fine fracture lines are attached to the real surface.
     // Nothing remains floating when scalar-field material is removed.
     material.onBeforeCompile = (shader) => {
+      shader.uniforms.impactPoint = this.iceImpact.point;
+      shader.uniforms.impactAge = this.iceImpact.age;
+      shader.uniforms.impactStrength = this.iceImpact.strength;
       shader.vertexShader =
         'varying vec3 vIcePoint;\nvarying vec3 vIceNormal;\n' +
         shader.vertexShader;
@@ -489,7 +918,7 @@ export class GameScene {
         '#include <begin_vertex>\nvIcePoint = position; vIceNormal = normal;',
       );
       shader.fragmentShader =
-        'varying vec3 vIcePoint;\nvarying vec3 vIceNormal;\n' +
+        'uniform vec3 impactPoint; uniform float impactAge; uniform float impactStrength; varying vec3 vIcePoint;\nvarying vec3 vIceNormal;\n' +
         shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <color_fragment>',
@@ -505,7 +934,7 @@ export class GameScene {
           'float pore = (1.0-smoothstep(.06,.15,length(fract(faceP*7.0)-vec2(.3+seed*.4,.5))))*step(.90,seed);\n' +
           'diffuseColor.rgb *= .94 + grain*.065 + cloud*.038;\n' +
           'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.83,.94,.96), crack*.65 + pore*.20);\n' +
-          'diffuseColor.a *= .89 + cloud*.045 + pore*.04;',
+          'float contact = exp(-dot(p-impactPoint,p-impactPoint)*24.0)*exp(-impactAge*27.0)*impactStrength; diffuseColor.rgb += vec3(.10,.15,.16)*contact; diffuseColor.a *= .89 + cloud*.045 + pore*.04;',
       );
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <roughnessmap_fragment>',
@@ -575,7 +1004,7 @@ export class GameScene {
     }) as EventListener);
     on(canvas, 'pointerdown', ((ev: PointerEvent) => {
       if (
-        this.model.paused ||
+        (this.model.paused && !this.model.phoneRinging) ||
         ![0, 2].includes(ev.button) ||
         this.pointerId !== null
       )
@@ -590,6 +1019,32 @@ export class GameScene {
       // Classify once, at contact. A stroke that starts on ice stays a melt
       // stroke even after it cuts a hole. A tray drag never fires the torch.
       this.raycaster.setFromCamera(this.pointer, this.camera);
+      if (
+        ev.button === 0 &&
+        this.raycaster.intersectObject(this.workshop.files, true).length
+      ) {
+        this.cancelInput();
+        this.onOpenFiles();
+        return;
+      }
+      if (
+        ev.button === 0 &&
+        this.raycaster.intersectObject(this.workshop.phone, true).length
+      ) {
+        this.cancelInput();
+        const key = this.raycaster.intersectObject(
+          this.workshop.keypad,
+          true,
+        )[0];
+        if (this.model.dialing && key) {
+          let o: THREE.Object3D | null = key.object;
+          while (o && !o.userData.digit) o = o.parent;
+          if (o?.userData.digit) {
+            this.onDialKey(o.userData.digit);
+          }
+        } else this.onOpenPhone();
+        return;
+      }
       const iceContact =
         this.raycaster.intersectObject(this.ice, false).length > 0;
       if (
@@ -607,6 +1062,8 @@ export class GameScene {
       } else {
         this.turntable.cancel();
         this.gesture = 'melt';
+        if (!this.startup.firstInput)
+          this.startup.firstInput = performance.now();
         this.model.press();
       }
     }) as EventListener);
@@ -615,7 +1072,10 @@ export class GameScene {
       if (this.gesture === 'rotate') {
         this.turntable.end();
         this.model.stop();
-      } else if (!this.model.toggle) this.model.stop();
+      } else if (!this.model.toggle) {
+        if (this.model.release) this.model.release();
+        else this.model.stop();
+      }
       const releasedId = this.pointerId;
       this.pointerId = null;
       this.gesture = 'idle';
@@ -700,52 +1160,104 @@ export class GameScene {
       minY = Math.min(minY, p.y);
       maxY = Math.max(maxY, p.y);
     };
-    const final = this.model.field.round === 19;
-    for (const x of [-3.72, 3.72])
-      for (const z of [-2.74, 2.74])
-        sample(x * TUNE.trayScale, -0.1, z * TUNE.trayScale);
-    for (const x of [-(final ? 2.44 : 2.16), final ? 2.44 : 2.16])
-      for (const y of [0.18, final ? 2.84 : 2.4])
-        for (const z of [-1.48, 1.48])
-          sample(x * TUNE.worldScale, y * TUNE.worldScale, z * TUNE.worldScale);
-    const top = w <= 600 ? 104 : 74,
-      bottom = w <= 600 ? 86 : 65;
-    const usable = Math.max(0.28, 1 - (top + bottom) / h);
+    // Fit the delivered solid, not the distant desk props. Cache its original
+    // bounds so chipping never causes a distracting zoom into the leftovers.
+    const bounds = this.ice.userData.deliveryBounds as THREE.Box3 | undefined;
+    const empty = this.model.inTutorial && this.model.tutorial?.block === 0;
+    if (bounds && !empty) {
+      for (const x of [bounds.min.x, bounds.max.x])
+        for (const y of [bounds.min.y, bounds.max.y])
+          for (const z of [bounds.min.z, bounds.max.z]) sample(x, y, z);
+    } else {
+      sample(-5.8, 0, -4.7);
+      sample(5.8, 2, 4.1);
+    }
+    const chapter = this.model.chapter ?? 1;
+    const widthTarget = empty
+      ? 0.85
+      : this.model.inTutorial
+        ? 0.52
+        : chapter <= 2
+          ? 0.57
+          : chapter <= 4
+            ? 0.64
+            : 0.72;
+    const heightTarget = this.model.inTutorial
+      ? 0.48
+      : chapter >= 4
+        ? 0.82
+        : 0.72;
     const span = Math.max(
-      (maxY - minY) / 2 / usable,
-      (maxX - minX) / 2 / a / 0.97,
+      (maxX - minX) / (2 * a * widthTarget),
+      (maxY - minY) / (2 * heightTarget),
     );
-    const x = (minX + maxX) / 2,
-      y = (minY + maxY) / 2 - ((bottom - top) / h) * span;
-    const blend = 1 - Math.exp(-12 * dt);
+    const x = (minX + maxX) / 2;
+    // Keep the upper work area steady when a call opens beneath it.
+    const y = (minY + maxY) / 2 + span * (this.model.inTutorial ? -0.16 : 0.08);
+    const blend = 1 - Math.exp(-4.5 * dt);
     this.framing.span += (span - this.framing.span) * blend;
     this.framing.x += (x - this.framing.x) * blend;
     this.framing.y += (y - this.framing.y) * blend;
-    this.camera.left = this.framing.x - this.framing.span * a;
-    this.camera.right = this.framing.x + this.framing.span * a;
-    this.camera.top = this.framing.y + this.framing.span;
-    this.camera.bottom = this.framing.y - this.framing.span;
+    // Orthographic distance never changes: zoom cannot move the camera into a
+    // tool or block. A projected-size guard keeps the complete solid usable.
+    const safeRatio = Math.min(
+      (this.framing.span * 2 * 0.86) / Math.max(0.01, maxY - minY),
+      (this.framing.span * 2 * a * 0.87) / Math.max(0.01, maxX - minX),
+    );
+    this.cameraZoom.target = Math.min(
+      safeRatio,
+      2 ** (((this.model.settings?.gameplayZoom ?? 0.5) - 0.5) * 0.75),
+    );
+    this.cameraZoom.step(dt, this.model.settings?.reducedMotion);
+    const introSpan =
+      (this.framing.span / Math.max(0.65, this.cameraZoom.value)) *
+      (1 + this.entry.value * 0.13);
+    this.camera.left = this.framing.x - introSpan * a;
+    this.camera.right = this.framing.x + introSpan * a;
+    this.camera.top = this.framing.y + introSpan;
+    this.camera.bottom = this.framing.y - introSpan;
     this.camera.updateProjectionMatrix();
   }
   burst(p: Vec3, count: number, fragment = false) {
     if (this.model.reducedParticles && !fragment) return;
+    const epsilon = 0.06,
+      density = this.model.field.density.bind(this.model.field);
+    const normal = new THREE.Vector3(
+      density({ x: p.x - epsilon, y: p.y, z: p.z }) -
+        density({ x: p.x + epsilon, y: p.y, z: p.z }),
+      density({ x: p.x, y: p.y - epsilon, z: p.z }) -
+        density({ x: p.x, y: p.y + epsilon, z: p.z }),
+      density({ x: p.x, y: p.y, z: p.z - epsilon }) -
+        density({ x: p.x, y: p.y, z: p.z + epsilon }),
+    ).normalize();
     for (
       let i = 0;
       i < count && this.particles.length < TUNE.particleCap;
       i++
     ) {
-      const mesh = new THREE.Mesh(
-        fragment
-          ? new THREE.IcosahedronGeometry(0.16, 0)
-          : new THREE.SphereGeometry(0.025, 5, 4),
-        new THREE.MeshStandardMaterial({
-          color: fragment ? 0xb3e3ea : 0xdcf7f8,
-          transparent: true,
-          opacity: fragment ? 0.72 : 0.5,
-          roughness: 0.3,
-        }),
+      const reused = this.particlePool.pop();
+      const mesh =
+        reused?.mesh ??
+        new THREE.Mesh(
+          fragment ? this.fragmentGeometry : this.vaporGeometry,
+          new THREE.MeshStandardMaterial({
+            color: fragment ? 0xb3e3ea : 0xdcf7f8,
+            transparent: true,
+            opacity: fragment ? 0.72 : 0.5,
+            roughness: 0.3,
+          }),
+        );
+      mesh.geometry = fragment ? this.fragmentGeometry : this.vaporGeometry;
+      (mesh.material as THREE.MeshStandardMaterial).opacity = fragment
+        ? 0.72
+        : this.model.thermal === false
+          ? 0.18
+          : 0.5;
+      (mesh.material as THREE.MeshStandardMaterial).color.setHex(
+        fragment ? 0xb3e3ea : 0xdcf7f8,
       );
       mesh.position.copy(p);
+      mesh.userData.detached = fragment && count === 1;
       const size = TUNE.worldScale / 1.7;
       mesh.scale.set(
         size * (0.55 + Math.random() * 0.7),
@@ -757,16 +1269,17 @@ export class GameScene {
         Math.random() * 3,
         Math.random() * 3,
       );
-      this.assembly.add(mesh);
+      if (mesh.userData.detached) mesh.scale.multiplyScalar(1.7);
+      this.contents.add(mesh);
       this.particles.push({
         mesh,
         velocity: new THREE.Vector3(
           (Math.random() - 0.5) * 1.3 * size,
           (fragment ? 0.4 : 1) * size,
           (Math.random() - 0.5) * 1.2 * size,
-        ),
+        ).addScaledVector(normal, fragment ? 0.65 : 0.2),
         age: 0,
-        duration: fragment ? 0.65 : 0.38,
+        duration: mesh.userData.detached ? 0.9 : fragment ? 0.65 : 0.38,
         fragment,
       });
     }
@@ -781,6 +1294,45 @@ export class GameScene {
       rawDt = this.last ? (now - this.last) / 1000 : 1 / 60;
     this.last = now;
     const dt = Math.min(rawDt, 0.033);
+    this.model.interactionBusy = this.gesture === 'rotate' || this.messageBusy;
+    const scale =
+      this.model.inTutorial && this.model.tutorial?.block === 0
+        ? 0.54
+        : (this.model.campaignScale ?? 1);
+    this.deck.scale.set(
+      TUNE.trayScale * scale * 1.12,
+      Math.min(1.4, scale),
+      TUNE.trayScale * scale * 1.05,
+    );
+    this.pedestal.scale.set(scale, 0.5, scale);
+    this.pedestal.position.y = -0.275;
+    this.assembly.position.y = -0.3;
+    this.workshop.update(
+      this.model.chapter ?? 1,
+      this.model.campaign?.state.tools ?? ['thermal'],
+      this.model.storyObjects ?? [],
+      this.model.unread ?? 0,
+      now / 1000,
+      scale,
+      this.model.toolId ?? 'thermal',
+      this.model.settings?.reducedMotion,
+      this.model.phoneRinging,
+      this.model.phoneOffHook,
+    );
+    if (
+      this.model.phoneRinging &&
+      (!this.model.paused || this.model.phase === 'completed')
+    ) {
+      this.ringClock -= dt;
+      if (this.ringClock <= 0) {
+        this.audio.ring();
+        this.workshop.ring();
+        this.ringClock = 4.2;
+      }
+    } else {
+      this.ringClock = 0;
+      this.audio.stopRing();
+    }
     if (!document.hidden) {
       this.frames.push(rawDt * 1000);
       if (this.frames.length > 900) this.frames.shift();
@@ -796,6 +1348,40 @@ export class GameScene {
       0,
       'YXZ',
     );
+    const reduced =
+      this.model.settings?.reducedMotion ||
+      matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const lift = this.delivery.step(rawDt, reduced),
+      recoil = this.recoil.step(rawDt, reduced);
+    this.entry.step(rawDt, reduced);
+    this.air.group.scale.setScalar(scale);
+    this.air.update(now / 1000, reduced, this.model.reducedParticles);
+    this.audio.room(
+      now / 1000,
+      this.model.paused || !!this.model.phoneOffHook,
+      this.entry.value,
+    );
+    const deliveryFade = this.deliveryFade.step(rawDt, reduced);
+    (this.ice.material as THREE.MeshPhysicalMaterial).opacity =
+      0.82 * deliveryFade;
+    this.contents.position.y = reduced ? 0 : Math.max(0, lift) + recoil * 0.1;
+    this.contents.scale.set(
+      1 + Math.min(0, lift) * -0.025,
+      1 + Math.min(0, lift) * 0.045,
+      1 + Math.min(0, lift) * -0.025,
+    );
+    this.contents.rotation.z = reduced ? 0 : recoil * 0.006;
+    this.deck.position.y =
+      0.18 * (1 - this.deck.scale.y) + (reduced ? 0 : recoil * 0.035);
+    this.workshop.react(reduced ? 0 : recoil);
+    if (!this.deliveryLanded && lift <= 0.025) {
+      this.deliveryLanded = true;
+      this.recoil.kick(-4 * this.deliveryMass);
+      this.audio.sound('tray', 0.32 + this.deliveryMass * 0.1);
+      for (const x of [-4, 4])
+        this.burst({ x, y: 0.25, z: 1 }, Math.ceil(4 * this.deliveryMass));
+    }
+    this.iceImpact.age.value += dt;
     this.assembly.updateMatrixWorld(true);
     this.fitCamera(dt);
     this.automation?.();
@@ -803,6 +1389,17 @@ export class GameScene {
     const hit = this.hasPointer
       ? this.raycaster.intersectObject(this.ice, false)[0]
       : undefined;
+    const phoneHover =
+      this.hasPointer &&
+      !this.model.paused &&
+      this.raycaster.intersectObject(this.workshop.phone, true).length > 0;
+    this.workshop.phoneHovered = phoneHover;
+    this.renderer.domElement.dataset.contact = phoneHover
+      ? 'phone'
+      : hit
+        ? 'ice'
+        : 'tray';
+    this.updatePhoneFocus(phoneHover);
     this.renderer.domElement.style.cursor =
       this.gesture === 'rotate'
         ? 'grabbing'
@@ -839,7 +1436,7 @@ export class GameScene {
       const step = Math.min(simulationTime, 0.025);
       this.model.update(
         step,
-        hit ? this.assembly.worldToLocal(this.localHit.copy(hit.point)) : null,
+        hit ? this.contents.worldToLocal(this.localHit.copy(hit.point)) : null,
       );
       simulationTime -= step;
     }
@@ -848,11 +1445,34 @@ export class GameScene {
       this.syncField();
       this.meshTime = 0;
     }
+    const serial = this.model.strikeSerial ?? 0;
+    const motion = TOOL_MOTION[this.model.toolId ?? 'thermal'];
+    this.swing.stiffness = motion.stiffness;
+    this.swing.damping = motion.damping;
+    if (serial !== this.previousStrike) {
+      this.previousStrike = serial;
+      this.swing.velocity = Math.max(
+        -24,
+        this.swing.velocity - (13.8 + motion.weight * 13.8),
+      );
+      this.recoil.kick(-0.28 - motion.weight * 0.72);
+      this.iceImpact.point.value.copy(
+        this.model.strike?.point ?? this.localHit,
+      );
+      this.iceImpact.age.value = 0;
+      this.iceImpact.strength.value = reduced ? 0.15 : 0.4 + motion.weight;
+    }
+    this.swing.step(rawDt, reduced);
     const firing =
       this.model.firing && !this.model.paused && this.model.fuel > 0;
     this.contactAge = firing && hit ? this.contactAge + dt : 0;
     this.crackClock += dt;
-    if (firing && hit && this.crackClock > 0.32 + Math.random() * 0.16) {
+    if (
+      firing &&
+      this.model.thermal !== false &&
+      hit &&
+      this.crackClock > 0.32 + Math.random() * 0.16
+    ) {
       this.crackClock = 0;
       this.audio.sound('chip', 0.25 + this.model.heatLevel * 0.07);
     }
@@ -865,9 +1485,11 @@ export class GameScene {
     this.torch.rotateY(Math.PI);
     if (firing && hit && !this.model.settings?.reducedMotion)
       this.torch.rotateZ(Math.sin(this.contactAge * 37) * 0.004);
+    this.flameFlow.target = firing && this.model.thermal !== false ? 1 : 0;
+    const flow = Math.max(0, this.flameFlow.step(rawDt, reduced));
     const tip = this.torch.localToWorld(new THREE.Vector3(0, 0, -0.46));
     for (const flame of [this.flame, this.core]) {
-      flame.visible = firing;
+      flame.visible = flow > 0.005 && !this.model.paused;
       flame.position.copy(tip);
       const dir = this.aim.clone().sub(tip);
       flame.quaternion.setFromUnitVectors(
@@ -875,17 +1497,115 @@ export class GameScene {
         dir.clone().normalize(),
       );
       flame.scale.set(
-        this.model.mode === 'wide' ? 1.7 : 1,
-        dir.length(),
-        this.model.mode === 'wide' ? 1.7 : 1,
+        (this.model.mode === 'wide' ? 1.7 : 1) * flow,
+        dir.length() * flow,
+        (this.model.mode === 'wide' ? 1.7 : 1) * flow,
       );
     }
-    this.torch.visible =
+    const toolVisible =
       this.hasPointer &&
-      !!hit &&
+      (!!hit ||
+        this.model.firing ||
+        this.model.strike?.active ||
+        this.swing.moving) &&
       !this.rotateMode &&
       this.gesture !== 'rotate' &&
       !this.model.paused;
+    this.toolPresence.target = toolVisible ? 1 : 0;
+    const presence = Math.max(0, this.toolPresence.step(rawDt, reduced));
+    this.torch.visible = presence > 0.005 && this.model.thermal !== false;
+    this.torch.scale.setScalar(Math.max(0.001, presence));
+    this.workshop.hand.visible =
+      presence > 0.005 && this.model.thermal === false;
+    const follower = this.toolFollow;
+    if (this.model.strike?.active)
+      this.aim.copy(
+        this.contents.localToWorld(this.localHit.copy(this.model.strike.point)),
+      );
+    follower.targetPosition.copy(this.aim);
+    if (hit?.face)
+      follower.targetNormal
+        .copy(hit.face.normal)
+        .transformDirection(this.ice.matrixWorld);
+    const pointerSpeed =
+      (this.pointer.distanceTo(this.lastToolPointer) * this.host.clientWidth) /
+      Math.max(0.001, dt);
+    this.lastToolPointer.copy(this.pointer);
+    follower.followPosition(dt, pointerSpeed);
+    this.toolOut.copy(follower.smoothedNormal);
+    this.toolAlong.copy(this.camera.position).sub(follower.displayPosition);
+    this.toolAlong.addScaledVector(
+      this.toolOut,
+      -this.toolAlong.dot(this.toolOut),
+    );
+    if (this.toolAlong.lengthSq() < 0.001)
+      this.toolAlong
+        .set(0, 0, 1)
+        .addScaledVector(this.toolOut, -this.toolOut.z);
+    this.toolAlong.normalize();
+    this.toolAcross.crossVectors(this.toolOut, this.toolAlong).normalize();
+    this.toolAlong.crossVectors(this.toolAcross, this.toolOut).normalize();
+    this.surfaceBasis.makeBasis(this.toolAcross, this.toolOut, this.toolAlong);
+    follower.targetRotation.setFromRotationMatrix(this.surfaceBasis);
+    follower.targetRotation.multiply(
+      this.toolRoll.setFromAxisAngle(this.toolAxis, -0.58),
+    );
+    const toolScale = Math.min(
+      1.2,
+      Math.max(0.38, Math.sqrt(this.model.campaignScale ?? 1)),
+    );
+    this.guardScale.setScalar(toolScale);
+    // Solve clearance on the target pose, then smooth toward it. Topology never
+    // rotates the displayed mesh directly, and the contact tip remains the pivot.
+    if (hit && this.model.thermal === false) {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        this.guardMatrix.compose(
+          follower.targetPosition,
+          follower.targetRotation,
+          this.guardScale,
+        );
+        let blocked = false;
+        for (const z of [0.45, 0.8, 1.2, 1.65]) {
+          this.toolGuard.set(0, 0.2, z).applyMatrix4(this.guardMatrix);
+          this.contents.worldToLocal(this.toolGuard);
+          if (this.model.field.density(this.toolGuard) > 0.35) {
+            blocked = true;
+            break;
+          }
+        }
+        if (!blocked) break;
+        follower.targetRotation.multiply(
+          this.toolRoll.setFromAxisAngle(this.toolAxis, -0.12),
+        );
+      }
+    }
+    follower.followRotation(dt);
+    const pose = strikePose(
+      this.model.strike?.active ? this.model.strike.progress : 1,
+      this.model.toolId === 'hand' || this.model.toolId === 'grip',
+    );
+    if (this.model.toolId === 'sledge' && (this.model.chargeTime ?? 0) > 0) {
+      const charge = Math.min(1, this.model.chargeTime! / 0.65);
+      pose.lift = 0.15 + charge * 0.85;
+      pose.angle = 0.2 + charge * 0.8;
+    }
+    const liftAmount = reduced ? pose.lift * 0.15 : pose.lift * motion.lift;
+    this.workshop.hand.position
+      .copy(follower.displayPosition)
+      .addScaledVector(this.toolOut, liftAmount);
+    this.workshop.hand.quaternion
+      .copy(follower.displayRotation)
+      .multiply(
+        this.toolRoll.setFromAxisAngle(
+          this.toolAxis,
+          -pose.angle * motion.recoil * (reduced ? 0.1 : 1),
+        ),
+      );
+    this.workshop.hand.scale.setScalar(toolScale * presence);
+    if (this.model.toolId === 'breaker' && firing && !reduced) {
+      this.workshop.hand.position.y += Math.sin(now * 0.135) * 0.035;
+      this.workshop.hand.rotation.z += Math.sin(now * 0.089) * 0.015;
+    }
     this.contact.visible =
       !!hit &&
       this.hasPointer &&
@@ -904,18 +1624,34 @@ export class GameScene {
         this.hitNormal,
       );
       this.contact.scale.setScalar(
-        (firing ? 1.2 + Math.sin(this.contactAge * 30) * 0.1 : 0.45) *
-          (this.model.mode === 'wide' ? 2.8 : 1.8),
+        (this.model.thermal === false
+          ? 0.45 *
+            (1 -
+              0.28 *
+                Math.max(0, 1 - (this.model.strikePulse ?? 0) / 0.22) *
+                ((this.model.strikePulse ?? 0) > 0 ? 1 : 0))
+          : firing
+            ? 1.2 + Math.sin(this.contactAge * 30) * 0.1
+            : 0.45) * (this.model.mode === 'wide' ? 2.8 : 1.8),
       );
       (this.contact.material as THREE.MeshBasicMaterial).opacity = firing
         ? 0.2
         : 0.12;
     }
     this.heatLight.position.copy(this.aim);
-    this.heatLight.intensity = firing && hit ? 0.35 : 0;
-    this.audio.fire(firing, !!hit, this.model.mode === 'wide');
-    if (firing && hit && Math.random() < dt * 14)
-      this.burst(this.assembly.worldToLocal(this.localHit.copy(hit.point)), 1);
+    this.heatLight.intensity = flow * 0.35;
+    this.audio.fire(
+      firing && this.model.thermal !== false,
+      !!hit,
+      this.model.mode === 'wide',
+    );
+    if (
+      firing &&
+      this.model.thermal !== false &&
+      hit &&
+      Math.random() < dt * 14
+    )
+      this.burst(this.contents.worldToLocal(this.localHit.copy(hit.point)), 1);
     for (const t of this.model.loot) {
       const g = this.lootMeshes.get(t.id);
       if (!g) continue;
@@ -924,27 +1660,81 @@ export class GameScene {
         continue;
       }
       g.position.set(t.x, t.y, t.z);
+      g.scale.setScalar(1);
+      g.rotation.set(0, 0, 0);
+      const valueWeight = Math.min(1.5, 0.65 + t.value / 1200);
+      if (t.state === 'embedded') {
+        const distance = g.position.distanceTo(this.iceImpact.point.value);
+        const shiver =
+          (Math.sin(this.iceImpact.age.value * 45 + distance) *
+            Math.exp(-this.iceImpact.age.value * 9)) /
+          (1 + distance);
+        if (!reduced) {
+          g.rotation.z = shiver * 0.025;
+          g.position.x += shiver * 0.015;
+        }
+        if (g.userData.revealedAt && !reduced) {
+          const revealAge = Math.max(0, now / 1000 - g.userData.revealedAt);
+          const reveal = Math.sin(revealAge * 24) * Math.exp(-revealAge * 9);
+          g.scale.setScalar(1 + reveal * 0.055);
+          g.rotation.z += reveal * 0.035;
+        }
+      }
+      if (t.state === 'freed' && !reduced) {
+        const breakaway =
+          Math.sin(Math.min(1, t.age / 0.16) * Math.PI) * Math.exp(-t.age * 9);
+        g.scale.set(
+          1 + breakaway * 0.12,
+          1 - breakaway * 0.13,
+          1 + breakaway * 0.06,
+        );
+        g.rotation.z =
+          Math.sin(t.age * 13) *
+          (t.kind === 'cash' ? 0.23 : t.kind === 'gold' ? 0.045 : 0.15);
+        g.rotation.y = t.age * (t.kind === 'coin' ? 4 : 0.7);
+      }
       if (t.state === 'collecting') {
         const f = Math.min(1, t.age / TUNE.collectionTime),
           e = f * f * (3 - 2 * f);
-        if (g.userData.slideLimit === undefined)
-          g.userData.slideLimit = this.collectionLimit(t);
-        const travel = e * g.userData.slideLimit;
-        g.position.set(
-          t.x * (1 - travel),
-          t.y - 0.12 * e,
-          t.z + (2 * TUNE.trayScale - t.z) * travel,
+        if (!g.userData.recoveryPath)
+          g.userData.recoveryPath = this.collectionPath(t);
+        const path = g.userData.recoveryPath as THREE.Vector3[];
+        const segment = e * (path.length - 1),
+          index = Math.min(path.length - 2, Math.floor(segment));
+        g.position.copy(path[index]).lerp(path[index + 1], segment - index);
+        const shrink = Math.max(0.001, 1 - Math.max(0, (e - 0.72) / 0.28) ** 2);
+        g.scale.set(
+          shrink * (1 + Math.sin(f * Math.PI) * 0.14),
+          shrink,
+          shrink,
         );
-        g.scale.setScalar(1 - 0.5 * e);
+        if (!reduced)
+          g.rotation.z =
+            Math.sin(f * Math.PI) * (t.kind === 'cash' ? 0.12 : 0.05);
       }
-      if (t.state === 'landed' && t.kind === 'coin')
-        g.rotation.z = Math.sin(t.age * 35) * Math.exp(-t.age * 15) * 0.16;
+      if (t.state === 'landed') {
+        const frequency = t.kind === 'gold' ? 23 : t.kind === 'cash' ? 33 : 40;
+        const bounce = reduced
+          ? 0
+          : Math.sin(t.age * frequency) * Math.exp(-t.age * 13) * valueWeight;
+        g.rotation.z = bounce * (t.kind === 'cash' ? 0.07 : 0.18);
+        g.position.y += Math.abs(bounce) * (t.kind === 'gold' ? 0.13 : 0.07);
+        const softness =
+          t.kind === 'cash' ? 0.19 : t.kind === 'gold' ? 0.035 : 0.065;
+        g.scale.set(
+          1 + bounce * softness,
+          1 - bounce * softness * 1.4,
+          1 + bounce * softness,
+        );
+      }
     }
     if (!this.model.paused)
       for (let i = this.particles.length - 1; i >= 0; i--) {
         const p = this.particles[i];
         p.age += dt;
-        p.velocity.y -= dt * (p.fragment ? 10 : 3);
+        const hanging = p.mesh.userData.detached && p.age < 0.12;
+        p.velocity.y -= dt * (hanging ? 1.2 : p.fragment ? 10 : 3);
+        if (hanging) p.mesh.rotation.z = Math.sin(p.age * 65) * 0.12;
         p.mesh.position.addScaledVector(p.velocity, dt);
         if (p.fragment) p.mesh.rotation.x += dt * 3;
         p.mesh.position.y = Math.max(0.18, p.mesh.position.y);
@@ -952,25 +1742,15 @@ export class GameScene {
           -dt * 2,
         );
         if (p.age > p.duration) {
-          this.disposeObject(p.mesh);
-          this.assembly.remove(p.mesh);
+          this.contents.remove(p.mesh);
+          this.particlePool.push(p);
           this.particles.splice(i, 1);
         }
       }
-    const phaseModel = this.model as SceneModel & {
-      phase?: string;
-      elapsed?: number;
-    };
-    const slide =
-      phaseModel.phase === 'transitioning'
-        ? Math.pow(
-            1 - Math.min(1, (phaseModel.elapsed ?? 0) / TUNE.transitionTime),
-            3,
-          )
-        : 0;
-    this.ice.position.z = -slide * 1.6;
-    this.lootGroup.position.z = -slide * 1.6;
     this.renderer.render(this.scene, this.camera);
+    if (!this.startup.firstRender) this.startup.firstRender = performance.now();
+    if (!this.startup.firstStrike && (this.model.strikePulse ?? 0) > 0)
+      this.startup.firstStrike = performance.now();
     this.renderTimes.push(performance.now() - start);
     if (this.renderTimes.length > 900) this.renderTimes.shift();
     this.uiTime += dt;
@@ -983,15 +1763,15 @@ export class GameScene {
   collectionLimit(t: Loot) {
     // Sweep the item's footprint against the actual remaining surface once.
     // A blocked slide settles into the tray locally as a safe recovery path.
-    const direction = new THREE.Vector3(-t.x, 0, 2 * TUNE.trayScale - t.z),
+    const direction = new THREE.Vector3(-t.x, 0, 2 * this.deck.scale.z - t.z),
       distance = direction.length();
-    direction.normalize().transformDirection(this.assembly.matrixWorld);
+    direction.normalize().transformDirection(this.contents.matrixWorld);
     let limit = 1;
     const probe = new THREE.Raycaster(undefined, direction, 0, distance);
     for (const x of [-t.w * 0.5, 0, t.w * 0.5])
       for (const z of [-t.d * 0.5, t.d * 0.5])
         for (const y of [t.y, t.y + t.h * 0.5]) {
-          this.assembly.localToWorld(probe.ray.origin.set(t.x + x, y, t.z + z));
+          this.contents.localToWorld(probe.ray.origin.set(t.x + x, y, t.z + z));
           const hit = probe.intersectObject(this.ice, false)[0];
           if (hit)
             limit = Math.min(
@@ -1001,10 +1781,179 @@ export class GameScene {
         }
     return limit;
   }
+  collectionPath(t: Loot) {
+    // The tray's shallow lanes guide loose finds around remaining ice. A small
+    // footprint search prevents a rear find from sliding straight through it.
+    const cols = 31,
+      rows = 23,
+      halfX = 3.32 * this.deck.scale.x,
+      halfZ = 2.2 * this.deck.scale.z;
+    const point = (x: number, z: number) =>
+      new THREE.Vector3(
+        ((x / (cols - 1)) * 2 - 1) * halfX,
+        t.y,
+        ((z / (rows - 1)) * 2 - 1) * halfZ,
+      );
+    const sx = Math.max(
+        0,
+        Math.min(cols - 1, Math.round((t.x / halfX + 1) * 0.5 * (cols - 1))),
+      ),
+      sz = Math.max(
+        0,
+        Math.min(rows - 1, Math.round((t.z / halfZ + 1) * 0.5 * (rows - 1))),
+      );
+    const start = sz * cols + sx,
+      previous = new Int32Array(cols * rows).fill(-1),
+      queue = [start];
+    previous[start] = start;
+    let end = -1;
+    for (let i = 0; i < queue.length; i++) {
+      const cell = queue[i],
+        x = cell % cols,
+        z = Math.floor(cell / cols);
+      if (z === rows - 1) {
+        end = cell;
+        break;
+      }
+      for (const [dx, dz] of [
+        [0, 1],
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+      ]) {
+        const nx = x + dx,
+          nz = z + dz,
+          next = nz * cols + nx;
+        if (
+          nx < 0 ||
+          nx >= cols ||
+          nz < 0 ||
+          nz >= rows ||
+          previous[next] !== -1
+        )
+          continue;
+        const p = point(nx, nz);
+        let blocked = false;
+        for (const ox of [-t.w * 0.48, 0, t.w * 0.48])
+          for (const oz of [-t.d * 0.48, 0, t.d * 0.48])
+            if (
+              this.model.field.density({
+                x: p.x + ox,
+                y: p.y + t.h * 0.35,
+                z: p.z + oz,
+              }) > 0.42
+            )
+              blocked = true;
+        if (!blocked) {
+          previous[next] = cell;
+          queue.push(next);
+        }
+      }
+    }
+    if (end < 0) {
+      const limit = this.collectionLimit(t);
+      return [
+        new THREE.Vector3(t.x, t.y, t.z),
+        new THREE.Vector3(
+          t.x * (1 - limit),
+          t.y - 0.08,
+          t.z + (2 * this.deck.scale.z - t.z) * limit,
+        ),
+      ];
+    }
+    const path: THREE.Vector3[] = [];
+    for (let cell = end; cell !== start; cell = previous[cell])
+      path.push(point(cell % cols, Math.floor(cell / cols)));
+    path.push(new THREE.Vector3(t.x, t.y, t.z));
+    path.reverse();
+    path.push(new THREE.Vector3(0, t.y - 0.08, halfZ));
+    return path;
+  }
+  phoneOrigin() {
+    const p = this.workshop.phone
+      .getWorldPosition(this.scratch)
+      .project(this.camera);
+    const r = this.host.getBoundingClientRect();
+    document.documentElement.style.setProperty(
+      '--phone-x',
+      `${r.left + ((p.x + 1) * r.width) / 2}px`,
+    );
+    document.documentElement.style.setProperty(
+      '--phone-y',
+      `${r.top + ((1 - p.y) * r.height) / 2}px`,
+    );
+    this.workshop.buzzUntil = performance.now() / 1000 + 0.45;
+  }
+  updatePhoneFocus(hover: boolean) {
+    const ringing = !!this.model.phoneRinging;
+    const f = this.phoneFocus;
+    const p = this.workshop.phone
+      .getWorldPosition(this.scratch)
+      .project(this.camera);
+    const distance = this.pointer.distanceTo(new THREE.Vector2(p.x, p.y));
+    if (ringing && !f.ringing) {
+      f.released = false;
+      f.distance = distance;
+    }
+    if (
+      hover ||
+      this.model.phoneOffHook ||
+      (this.hasPointer && distance < Math.min(0.3, f.distance * 0.6))
+    )
+      f.released = true;
+    f.ringing = ringing;
+    const shell = this.host.parentElement;
+    if (shell) {
+      shell.style.setProperty('--phone-focus-x', `${(p.x + 1) * 50}%`);
+      shell.style.setProperty('--phone-focus-y', `${(1 - p.y) * 50}%`);
+      shell.style.setProperty(
+        '--phone-focus-opacity',
+        String(
+          ringing && !f.released && !this.model.paused
+            ? this.model.inTutorial
+              ? 0.15
+              : (this.model.chapter ?? 1) <= 1
+                ? 0.12
+                : (this.model.chapter ?? 1) === 2
+                  ? 0.08
+                  : 0
+            : 0,
+        ),
+      );
+    }
+  }
+  deliver() {
+    this.deliveryMass = THREE.MathUtils.clamp(
+      (this.model.campaignScale ?? 1) ** 2,
+      0.65,
+      1.9,
+    );
+    const massRoot = Math.sqrt(this.deliveryMass);
+    this.delivery.stiffness = 170 / massRoot;
+    this.delivery.damping = 17 + (this.deliveryMass - 1) * 1.5;
+    this.delivery.set(this.model.settings?.reducedMotion ? 0 : 3.6 * massRoot);
+    this.deliveryFade.set(0);
+    this.deliveryFade.target = 1;
+    this.delivery.target = 0;
+    this.deliveryLanded = false;
+    this.swing.set(0);
+    this.toolFollow.reset();
+    this.flameFlow.set(0);
+  }
+  enterWorkshop() {
+    this.entry.set(this.model.settings?.reducedMotion ? 0 : 1);
+    this.entry.target = 0;
+    this.workshop.buzzUntil = performance.now() / 1000 + 0.8;
+  }
+  impact(t: Loot) {
+    this.recoil.kick(
+      -(t.kind === 'gold' ? 2.1 : t.kind === 'cash' ? 0.35 : 0.75),
+    );
+  }
   clearParticles() {
     for (const p of this.particles) {
-      this.assembly.remove(p.mesh);
-      this.disposeObject(p.mesh);
+      this.contents.remove(p.mesh);
+      this.particlePool.push(p);
     }
     this.particles = [];
   }
@@ -1022,7 +1971,32 @@ export class GameScene {
   stats() {
     const s = [...this.frames].sort((a, b) => a - b),
       work = [...this.renderTimes].sort((a, b) => a - b);
+    const bounds = this.ice.userData.deliveryBounds as THREE.Box3 | undefined;
+    const projected = {
+      left: Infinity,
+      right: -Infinity,
+      top: Infinity,
+      bottom: -Infinity,
+    };
+    if (bounds)
+      for (const x of [bounds.min.x, bounds.max.x])
+        for (const y of [bounds.min.y, bounds.max.y])
+          for (const z of [bounds.min.z, bounds.max.z]) {
+            const p = this.scratch
+              .set(x, y, z)
+              .applyMatrix4(this.ice.matrixWorld)
+              .project(this.camera);
+            projected.left = Math.min(projected.left, (p.x + 1) / 2);
+            projected.right = Math.max(projected.right, (p.x + 1) / 2);
+            projected.top = Math.min(projected.top, (1 - p.y) / 2);
+            projected.bottom = Math.max(projected.bottom, (1 - p.y) / 2);
+          }
     return {
+      framing: {
+        ...projected,
+        width: projected.right - projected.left,
+        height: projected.bottom - projected.top,
+      },
       documentVisible: !document.hidden,
       documentFocused: document.hasFocus(),
       rotation: {
@@ -1051,8 +2025,25 @@ export class GameScene {
       triangles: this.renderer.info.render.triangles,
       geometries: this.renderer.info.memory.geometries,
       particles: this.particles.length,
+      pooledParticles: this.particlePool.length,
+      motion: {
+        delivery: this.delivery.value,
+        recoil: this.recoil.value,
+        swing: this.swing.value,
+        flame: this.flameFlow.value,
+        activeTool: this.model.toolId,
+      },
       voices: this.audio.voices,
       width: this.host.clientWidth,
+      startup: {
+        firstRenderMs: this.startup.firstRender,
+        interactiveReadyMs: this.startup.interactiveReady,
+        rendererReadyMs: this.startup.firstRender - this.startup.created,
+        firstStrikeResponseMs:
+          this.startup.firstInput && this.startup.firstStrike
+            ? this.startup.firstStrike - this.startup.firstInput
+            : null,
+      },
       height: this.host.clientHeight,
       pixelRatio: this.renderer.getPixelRatio(),
     };
@@ -1061,6 +2052,11 @@ export class GameScene {
     cancelAnimationFrame(this.animation);
     this.disposables.forEach((fn) => fn());
     this.audio.dispose();
+    this.particlePool.forEach((p) =>
+      (p.mesh.material as THREE.Material).dispose(),
+    );
+    this.fragmentGeometry.dispose();
+    this.vaporGeometry.dispose();
     this.disposeObject(this.scene);
     this.renderer.dispose();
     this.renderer.domElement.remove();

@@ -1,4 +1,5 @@
 import { TUNE, worldY, type Loot, type Vec3 } from './tuning';
+import type { Profile } from './campaign-content';
 
 // One scalar field owns the visible surface, ray hits, restraints, and connectivity.
 export class IceField {
@@ -12,6 +13,11 @@ export class IceField {
   constructor(
     public round = 0,
     saved?: number[],
+    public profile?: {
+      scale: number;
+      shape: Profile;
+      releaseMode?: 'surfaceExposure';
+    },
   ) {
     const { nx, ny, nz, step, baseY } = TUNE;
     this.values = new Float32Array(nx * ny * nz);
@@ -20,7 +26,7 @@ export class IceField {
     this.queue = new Int32Array(this.values.length);
     const final = round === TUNE.finalRound - 1;
     const width = final ? 2.37 : 2.1;
-    const height = final ? 2.8 : 2.35;
+    const height = profile?.shape === 'slab' ? 1.75 : final ? 2.8 : 2.35;
     for (let z = 0; z < nz; z++)
       for (let y = 0; y < ny; y++)
         for (let x = 0; x < nx; x++) {
@@ -33,9 +39,9 @@ export class IceField {
             z: (z - (nz - 1) / 2) * step,
           };
           this.points[i] = {
-            x: p.x * TUNE.worldScale,
-            y: worldY(p.y),
-            z: p.z * TUNE.worldScale,
+            x: p.x * TUNE.worldScale * (profile?.scale ?? 1),
+            y: 0.18 + (worldY(p.y) - 0.18) * (profile?.scale ?? 1),
+            z: p.z * TUNE.worldScale * (profile?.scale ?? 1),
           };
           const edge = Math.min(
             width - Math.abs(p.x),
@@ -48,9 +54,19 @@ export class IceField {
               : 0;
           // Cluster family: a broad cap on a clearly visible shared central restraint.
           if (
-            round % 4 === 2 &&
+            (profile ? profile.shape === 'wings' : round % 4 === 2) &&
             p.y < 1.48 &&
             (Math.abs(p.x) > 0.46 || Math.abs(p.z) > 0.38)
+          )
+            this.values[i] = 0;
+          if (profile?.shape === 'tower' && Math.abs(p.x) > 1.35)
+            this.values[i] = 0;
+          if (profile?.shape === 'seam' && Math.abs(p.x) < 0.18 && p.y > 1.1)
+            this.values[i] *= 0.3;
+          if (
+            profile?.shape === 'archive' &&
+            (Math.abs(p.y - 1.35) < 0.14 || Math.abs(p.x) < 0.18) &&
+            p.z > 0.4
           )
             this.values[i] = 0;
         }
@@ -62,6 +78,52 @@ export class IceField {
   }
   index(x: number, y: number, z: number) {
     return x + TUNE.nx * (y + TUNE.ny * z);
+  }
+  density(p: Vec3, exactSurface = false) {
+    const scale = TUNE.worldScale * (this.profile?.scale ?? 1);
+    const x = p.x / (TUNE.step * scale) + (TUNE.nx - 1) / 2;
+    const z = p.z / (TUNE.step * scale) + (TUNE.nz - 1) / 2;
+    const localY = (p.y - 0.18) / scale;
+    const y =
+      localY < 0.31 ? (localY + 0.31) / 0.62 : (localY - 0.07) / TUNE.step;
+    const ix = Math.floor(x),
+      iy = Math.floor(y),
+      iz = Math.floor(z);
+    if (
+      ix < 0 ||
+      iy < 0 ||
+      iz < 0 ||
+      ix >= TUNE.nx - 1 ||
+      iy >= TUNE.ny - 1 ||
+      iz >= TUNE.nz - 1
+    )
+      return 0;
+    if (exactSurface) {
+      // Match the six tetrahedra used by surface(), not trilinear interpolation.
+      const axes = [
+        { f: x - ix, offset: 1 },
+        { f: y - iy, offset: TUNE.nx },
+        { f: z - iz, offset: TUNE.nx * TUNE.ny },
+      ].sort((a, b) => b.f - a.f);
+      const i = this.index(ix, iy, iz),
+        [a, b, c] = axes;
+      return (
+        this.values[i] * (1 - a.f) +
+        this.values[i + a.offset] * (a.f - b.f) +
+        this.values[i + a.offset + b.offset] * (b.f - c.f) +
+        this.values[i + 1 + TUNE.nx + TUNE.nx * TUNE.ny] * c.f
+      );
+    }
+    let density = 0;
+    for (let dz = 0; dz < 2; dz++)
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++)
+          density +=
+            this.values[this.index(ix + dx, iy + dy, iz + dz)] *
+            (dx ? x - ix : 1 - x + ix) *
+            (dy ? y - iy : 1 - y + iy) *
+            (dz ? z - iz : 1 - z + iz);
+    return density;
   }
   carveLoot(loot: Loot[]) {
     for (const t of loot)
@@ -101,6 +163,97 @@ export class IceField {
       if (heat) {
         this.values[i] = Math.max(0, this.values[i] - heat * dt);
         changed = true;
+      }
+    }
+    if (changed) {
+      this.dirty = true;
+      this.revision++;
+    }
+    return changed;
+  }
+  surfaceNormal(point: Vec3): Vec3 {
+    const e = TUNE.step * TUNE.worldScale * (this.profile?.scale ?? 1) * 0.5;
+    const gradient = (axis: 'x' | 'y' | 'z') =>
+      this.density({ ...point, [axis]: point[axis] - e }) -
+      this.density({ ...point, [axis]: point[axis] + e });
+    const x = gradient('x'),
+      y = gradient('y'),
+      z = gradient('z'),
+      d = Math.hypot(x, y, z) || 1;
+    return { x: x / d, y: y / d, z: z / d };
+  }
+  strikeAt(
+    point: Vec3,
+    power: number,
+    radius: number,
+    options: {
+      center: number;
+      depth: number;
+      weak: number;
+      support: number;
+      detach: number;
+    },
+    normal = this.surfaceNormal(point),
+  ) {
+    const rr = radius * radius,
+      step = TUNE.step * TUNE.worldScale * (this.profile?.scale ?? 1);
+    let changed = false;
+    for (let i = 0; i < this.values.length; i++) {
+      const value = this.values[i];
+      if (value <= 0) continue;
+      const p = this.points[i],
+        dx = p.x - point.x,
+        dy = p.y - point.y,
+        dz = p.z - point.z;
+      const along = dx * normal.x + dy * normal.y + dz * normal.z;
+      const side = Math.max(0, dx * dx + dy * dy + dz * dz - along * along);
+      const distance = side + (along * along) / (options.depth * options.depth);
+      if (distance >= rr) continue;
+      const neighbors =
+        options.support > 1 || options.detach > 1
+          ? [
+              -1,
+              1,
+              -TUNE.nx,
+              TUNE.nx,
+              -TUNE.nx * TUNE.ny,
+              TUNE.nx * TUNE.ny,
+            ].filter((d) => this.values[i + d] > 0.5).length
+          : 6;
+      const center = side < rr * 0.45 * 0.45 ? options.center : 1;
+      const weak = value < 0.95 ? options.weak : 1;
+      const support = neighbors <= 3 ? options.support : 1;
+      this.values[i] = Math.max(
+        0,
+        value - power * (1 - distance / rr) * center * weak * support,
+      );
+      changed = true;
+    }
+    if (options.detach > 1) {
+      // Remove only genuinely weakened, thin local bridges. The geometry is
+      // removed before object release is considered; no clipping shortcut.
+      const reach = radius * options.detach + step;
+      for (let i = 0; i < this.values.length; i++) {
+        if (
+          this.values[i] <= 0.5 ||
+          this.values[i] > 0.5 + 0.18 * (options.detach - 1)
+        )
+          continue;
+        const p = this.points[i];
+        if (Math.hypot(p.x - point.x, p.y - point.y, p.z - point.z) > reach)
+          continue;
+        const neighbors = [
+          -1,
+          1,
+          -TUNE.nx,
+          TUNE.nx,
+          -TUNE.nx * TUNE.ny,
+          TUNE.nx * TUNE.ny,
+        ].filter((d) => this.values[i + d] > 0.5).length;
+        if (neighbors <= 3) {
+          this.values[i] = 0;
+          changed = true;
+        }
       }
     }
     if (changed) {
@@ -152,40 +305,124 @@ export class IceField {
     }
     return fragments;
   }
-  canRelease(t: Loot) {
-    let count = 0;
-    // Visible material immediately around the item, plus its vertical drop corridor.
-    for (let i = 0; i < this.values.length; i++) {
-      if (this.values[i] <= 0.5) continue;
-      const p = this.points[i];
-      if (
-        Math.abs(p.x - t.x) < t.w * 0.5 + 0.06 * TUNE.worldScale &&
-        Math.abs(p.z - t.z) < t.d * 0.5 + 0.06 * TUNE.worldScale &&
-        p.y < t.y + t.h * 0.5 + 0.06 * TUNE.worldScale
-      )
-        count++;
+  canRelease(t: Loot, contactSamples?: Vec3[]) {
+    if (this.profile?.releaseMode === 'surfaceExposure') {
+      const e = this.exposure(t);
+      if (e.exposed < 0.58 || e.topCover > 0.12) return false;
+      // Once the exposed shell cracks, its narrow remaining pedestal crumbles.
+      // Remove that real geometry before gravity starts; later fields never use this path.
+      const margin = TUNE.step * TUNE.worldScale * this.profile.scale;
+      this.points.forEach((p, i) => {
+        if (
+          Math.abs(p.x - t.x) < t.w * 0.55 + margin &&
+          Math.abs(p.z - t.z) < t.d * 0.55 + margin &&
+          p.y < t.y + t.h * 0.5 + margin
+        ) {
+          this.values[i] = this.warmth[i] = 0;
+        }
+      });
+      this.dirty = true;
+      this.revision++;
+      return true;
     }
-    if (count > 3) return false;
-    // The last brittle contact points fracture visibly before the drop begins.
-    for (let i = 0; i < this.values.length; i++) {
-      const p = this.points[i];
-      if (
-        Math.abs(p.x - t.x) < t.w * 0.5 + 0.18 * TUNE.worldScale &&
-        Math.abs(p.z - t.z) < t.d * 0.5 + 0.18 * TUNE.worldScale &&
-        p.y < t.y + t.h * 0.5 + 0.15 * TUNE.worldScale
-      ) {
-        this.values[i] = 0;
-        this.warmth[i] = 0;
-      }
+    if (contactSamples?.length) {
+      return contactSamples.every(
+        (p) =>
+          this.density({ x: t.x + p.x, y: t.y + p.y, z: t.z + p.z }, true) <=
+          0.5,
+      );
     }
-    this.dirty = true;
-    this.revision++;
+    // Headless simulation fallback: test the item's volume itself, with no
+    // invisible buffer outside it. The renderer supplies exact mesh probes.
+    const step = (TUNE.step * TUNE.worldScale * (this.profile?.scale ?? 1)) / 4;
+    const nx = Math.max(2, Math.ceil(t.w / step)),
+      ny = Math.max(2, Math.ceil(t.h / step)),
+      nz = Math.max(2, Math.ceil(t.d / step));
+    for (let x = 0; x <= nx; x++)
+      for (let y = 0; y <= ny; y++)
+        for (let z = 0; z <= nz; z++) {
+          const dx = (x / nx - 0.5) * t.w,
+            dz = (z / nz - 0.5) * t.d;
+          if (
+            t.kind === 'coin' &&
+            !t.story &&
+            (dx / (t.w / 2)) ** 2 + (dz / (t.d / 2)) ** 2 > 1.001
+          )
+            continue;
+          if (
+            this.density(
+              { x: t.x + dx, y: t.y + (y / ny - 0.5) * t.h, z: t.z + dz },
+              true,
+            ) > 0.5
+          )
+            return false;
+        }
     return true;
+  }
+  landingHeight(t: Loot, nextY: number) {
+    const floor = 0.2 + t.h / 2;
+    const from = t.y - t.h / 2,
+      to = Math.max(0.2, nextY - t.h / 2),
+      step = (TUNE.step * TUNE.worldScale * (this.profile?.scale ?? 1)) / 4;
+    // Sweep the footprint through this frame's fall; this cannot tunnel through
+    // a thin remaining shelf, even on a slow frame.
+    for (let y = from; y >= to; y -= Math.min(step, y - to || step)) {
+      for (const x of [-0.42, 0, 0.42])
+        for (const z of [-0.42, 0, 0.42]) {
+          const point = { x: t.x + t.w * x, y, z: t.z + t.d * z };
+          if (this.density(point, true) <= 0.5) continue;
+          let low = y,
+            high = Math.min(from, y + step);
+          for (let i = 0; i < 8; i++) {
+            const mid = (low + high) / 2;
+            if (this.density({ ...point, y: mid }, true) > 0.5) low = mid;
+            else high = mid;
+          }
+          return Math.max(floor, high + t.h / 2 + 0.005);
+        }
+    }
+    return floor;
   }
   remaining() {
     let n = 0;
     for (const v of this.values) if (v > 0.5) n++;
     return n;
+  }
+  exposure(t: Loot) {
+    const margin =
+      TUNE.step * TUNE.worldScale * (this.profile?.scale ?? 1) * 1.8;
+    let shell = 0,
+      covered = 0,
+      top = 0,
+      roof = 0;
+    this.points.forEach((p, i) => {
+      const dx = Math.abs(p.x - t.x),
+        dz = p.z - t.z,
+        dy = p.y - t.y;
+      if (
+        dx < t.w / 2 + margin &&
+        Math.abs(dz) < t.d / 2 + margin &&
+        dy > -t.h / 2 &&
+        dy < t.h / 2 + margin &&
+        (dy > t.h / 2 || dz > t.d / 2)
+      ) {
+        shell++;
+        if (this.values[i] > 0.5) covered++;
+      }
+      if (
+        dx < t.w * 0.48 &&
+        Math.abs(dz) < t.d * 0.48 &&
+        dy > t.h / 2 &&
+        dy < t.h / 2 + margin
+      ) {
+        top++;
+        if (this.values[i] > 0.5) roof++;
+      }
+    });
+    return {
+      exposed: shell ? 1 - covered / shell : 1,
+      topCover: top ? roof / top : 0,
+    };
   }
 }
 

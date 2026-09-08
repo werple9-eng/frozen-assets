@@ -2042,6 +2042,7 @@ button svg {
   color: #b9ad95;
 }
 .map-branch {
+  display: none;
   position: absolute;
   transform: translateX(-50%);
   font:
@@ -2270,8 +2271,18 @@ button svg {
   font-size: 28px;
   animation: purchase-snow 650ms both;
 }
-.purchase-snow i{display:inline-block;width:4px;height:9px;margin:0 7px;background:#c8d6c3;transform:rotate(23deg)}
-.purchase-snow i:nth-child(2n){height:5px;transform:translateY(15px) rotate(-37deg)}
+.purchase-snow i {
+  display: inline-block;
+  width: 4px;
+  height: 9px;
+  margin: 0 7px;
+  background: #c8d6c3;
+  transform: rotate(23deg);
+}
+.purchase-snow i:nth-child(2n) {
+  height: 5px;
+  transform: translateY(15px) rotate(-37deg);
+}
 .screen-footer {
   position: absolute;
   bottom: 0;
@@ -2819,6 +2830,478 @@ button svg {
   }
   .map-node *,
   .skill-detail * {
+    animation: none !important;
+  }
+}
+/* Fifth pass: the map uses the same complete card bounds as skills.ts. */
+.tactile:is(.bench-return, .tree-buy, .map-tools button, .fuel-unit button) {
+  display: flex;
+  align-items: stretch;
+  padding: 0 !important;
+}
+.tactile:is(.bench-return, .tree-buy, .map-tools button, .fuel-unit button)
+  > .tactile-face {
+  min-height: inherit;
+  height: auto;
+  padding: 12px 20px;
+  flex: 1;
+  font: inherit;
+}
+.tactile:is(.bench-return, .tree-buy, .map-tools button, .fuel-unit button)
+  > .tactile-face:before {
+  inset: 0;
+  border-radius: 5px;
+  border-bottom-width: 7px;
+}
+.hud-top {
+  height: 138px;
+  padding: 18px 4%;
+}
+.hud-top nav {
+  gap: 38px;
+}
+.hud-top nav button {
+  min-width: 218px;
+  min-height: 94px;
+  font-size: 40px;
+  padding: 16px 24px;
+}
+.hud-top .station-mark {
+  min-height: 82px;
+}
+.skill-plate {
+  top: 138px;
+}
+.tree-explorer {
+  bottom: 110px;
+}
+.tree-context {
+  top: 20px;
+  font-size: 13px;
+}
+.tree-viewport {
+  inset: 58px 360px 90px 0;
+}
+.map-node {
+  width: 320px;
+  height: 260px;
+  margin: -130px 0 0 -160px;
+  font-size: 32px;
+}
+.map-node.milestone {
+  width: 360px;
+  height: 290px;
+  margin: -145px 0 0 -180px;
+  font-size: 34px;
+}
+.map-node .tactile-face {
+  justify-content: center;
+  gap: 10px;
+  border-radius: 18px;
+  background: linear-gradient(150deg, #383a32ed, #242820ed);
+  border: 1px solid #a8946440;
+  padding: 16px 10px;
+}
+.map-node .node-object {
+  width: 116px;
+  height: 116px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.map-node.milestone .node-object {
+  width: 136px;
+  height: 136px;
+}
+.map-node .map-effect {
+  font-size: 20px;
+  line-height: 1.15;
+}
+.map-node .map-cost {
+  font-size: 25px;
+  line-height: 1.15;
+}
+.map-node.locked .tactile-face {
+  background: #252620;
+  border-style: dashed;
+}
+.map-node.purchased .tactile-face {
+  border: 2px solid #c6ae6c;
+  background: linear-gradient(145deg, #55533b, #31362a);
+}
+.map-node.available .tactile-face {
+  box-shadow:
+    0 8px 0 #171d19,
+    inset 0 1px #dac28b50;
+}
+.map-node.milestone .tactile-face {
+  border-width: 3px;
+  border-radius: 22px 5px;
+}
+.map-node .kinetic-word {
+  white-space: nowrap;
+  line-height: 1.1;
+}
+.map-current,
+.map-groove {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.skill-detail {
+  width: 304px;
+  right: 28px;
+  top: 80px;
+  padding: 24px;
+}
+.skill-detail h3 {
+  font-size: 34px;
+}
+.skill-detail p {
+  font-size: 17px;
+  line-height: 1.45;
+}
+.tree-buy {
+  min-height: 82px;
+  font-size: 30px;
+  margin-top: 24px;
+}
+.map-tools {
+  gap: 20px;
+  bottom: 24px;
+}
+.map-tools button {
+  min-width: 65px;
+  min-height: 64px;
+  padding: 10px 16px;
+  font-size: 23px;
+}
+.map-tools > span {
+  font-size: 16px;
+}
+.screen-footer {
+  height: 110px;
+  padding: 14px 6%;
+}
+.bench-return {
+  min-height: 80px;
+  min-width: 360px;
+  font-size: 34px;
+  padding: 12px 28px;
+}
+.fuel-unit {
+  width: 260px;
+}
+.fuel-unit button {
+  min-height: 72px;
+  font-size: 32px;
+}
+.tool-buttons button {
+  min-height: 68px;
+  font-size: 25px;
+  padding: 12px 22px;
+}
+.pause-menu,
+.completion-menu {
+  max-width: 640px !important;
+  width: min(640px, calc(100% - 48px)) !important;
+  padding: 36px !important;
+}
+.pause-links {
+  gap: 24px;
+}
+.pause-links button {
+  min-height: 78px;
+  font-size: 30px;
+}
+.pause-menu .bench-return,
+.completion-menu .bench-return {
+  width: 100%;
+}
+.settings-drawer {
+  width: 960px;
+  margin-top: 166px;
+  padding: 28px 38px;
+}
+.settings-drawer h2 {
+  font-size: 44px !important;
+}
+.settings-grid {
+  column-gap: 52px;
+}
+.setting-row {
+  padding: 20px 0;
+}
+.setting-row label,
+.setting-switch {
+  font-size: 24px;
+}
+.setting-switch {
+  min-height: 76px;
+  padding: 12px 0;
+  gap: 20px;
+}
+.setting-switch small {
+  font-size: 14px;
+}
+.setting-switch [data-slot='switch'] {
+  width: 88px;
+  height: 46px;
+  flex-shrink: 0;
+}
+.setting-switch [data-slot='switch-thumb'] {
+  width: 34px;
+  height: 34px;
+}
+.setting-row [data-slot='slider'] {
+  min-height: 48px;
+}
+.setting-row [data-slot='slider-track'] {
+  height: 12px !important;
+}
+.setting-row [data-slot='slider-thumb'] {
+  width: 34px !important;
+  height: 40px !important;
+}
+.settings-drawer > .bench-return {
+  min-height: 82px;
+  margin-top: 28px;
+}
+.reward-impact {
+  position: fixed;
+  left: var(--from-x);
+  top: var(--from-y);
+  z-index: 12;
+  pointer-events: none;
+  color: #f3e4b9;
+  font: 800 30px var(--bench-type);
+  text-shadow:
+    0 3px 0 #183135,
+    0 0 12px #163238;
+  animation: impact-money 1350ms both;
+}
+.reward-impact.valuable {
+  color: #ffe49c;
+  font-size: 38px;
+}
+.reward-impact span {
+  display: flex;
+}
+.reward-impact b {
+  display: inline-block;
+  animation: impact-digit 620ms cubic-bezier(0.2, 0.8, 0.3, 1.3) both;
+}
+.reward-impact i {
+  position: absolute;
+  width: 54px;
+  height: 15px;
+  border: 2px solid #e8dcb6;
+  border-radius: 50%;
+  left: 50%;
+  top: 42px;
+  animation: impact-ring 500ms both;
+}
+@keyframes impact-money {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(1.15, 0.55);
+  }
+  9% {
+    opacity: 1;
+    transform: translate(-50%, -22px) scale(0.94, 1.18);
+  }
+  24% {
+    transform: translate(-50%, -40px) scale(1.05, 0.96);
+  }
+  40% {
+    transform: translate(-50%, -32px) scale(1);
+  }
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-44%, -72px);
+  }
+}
+@keyframes impact-digit {
+  0% {
+    transform: translateY(10px) scale(0.85, 1.2);
+  }
+  35% {
+    transform: translateY(-9px) rotate(-4deg);
+  }
+  65% {
+    transform: translateY(3px) scale(1.08, 0.92);
+  }
+  100% {
+    transform: none;
+  }
+}
+@keyframes impact-ring {
+  from {
+    opacity: 0.7;
+    transform: translateX(-50%) scale(0.3);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.8);
+  }
+}
+@media (max-width: 1100px) and (min-width: 701px) {
+  .hud-top nav button {
+    min-width: 180px;
+    font-size: 34px;
+  }
+  .station-mark h1 {
+    display: none;
+  }
+  .tree-viewport {
+    right: 320px;
+  }
+  .skill-detail {
+    width: 276px;
+    right: 22px;
+    padding: 20px;
+  }
+}
+@media (max-width: 700px) {
+  .hud-top {
+    height: 168px;
+  }
+  .hud-top nav {
+    gap: 26px;
+    bottom: 12px;
+  }
+  .hud-top nav button {
+    min-width: 145px;
+    min-height: 80px;
+    padding: 12px;
+    font-size: 31px;
+  }
+  .skill-plate {
+    top: 168px;
+  }
+  .tree-explorer {
+    bottom: 100px;
+  }
+  .tree-context {
+    top: 10px;
+    font-size: 11px;
+  }
+  .tree-context span:last-child {
+    display: none;
+  }
+  .tree-viewport {
+    inset: 35px 0 300px;
+  }
+  .skill-detail {
+    top: auto;
+    bottom: 82px;
+    left: 18px;
+    right: 18px;
+    width: auto;
+    padding: 14px 18px;
+  }
+  .skill-detail h3 {
+    font-size: 27px;
+  }
+  .skill-detail p {
+    font-size: 14px;
+  }
+  .skill-detail .tree-buy {
+    min-height: 64px;
+    font-size: 26px;
+    margin-top: 12px;
+  }
+  .map-tools {
+    bottom: 12px;
+    gap: 14px;
+    left: 20px;
+    right: 20px;
+    justify-content: center;
+  }
+  .map-tools button {
+    min-width: 48px;
+    min-height: 56px;
+    font-size: 18px;
+    padding: 6px;
+  }
+  .map-tools {
+    transform: none;
+    gap: 12px;
+  }
+  .map-tools button > .tactile-face {
+    padding: 8px;
+  }
+  .map-tools button:nth-child(2) {
+    min-width: 116px;
+  }
+  .map-tools > span {
+    display: none;
+  }
+  .screen-footer {
+    height: 100px;
+    padding: 12px 24px;
+  }
+  .bench-return {
+    min-width: 0;
+    width: 100%;
+    min-height: 74px;
+    font-size: 28px;
+  }
+  .settings-drawer {
+    margin-top: 186px;
+    max-width: calc(100% - 32px);
+    padding: 22px;
+  }
+  .settings-grid {
+    display: block;
+  }
+  .setting-switch {
+    font-size: 20px;
+  }
+  .setting-row label {
+    font-size: 22px;
+  }
+  .settings-drawer > .bench-return {
+    font-size: 26px;
+    padding: 10px;
+  }
+  .fuel-unit {
+    width: 190px;
+  }
+  .fuel-unit button {
+    min-height: 64px;
+    font-size: 28px;
+  }
+  .tool-buttons button {
+    min-height: 60px;
+    font-size: 21px;
+  }
+}
+.reduced-motion .reward-impact {
+  animation: impact-quiet 1100ms both !important;
+}
+.reduced-motion .reward-impact b,
+.reduced-motion .reward-impact i {
+  animation: none !important;
+}
+@keyframes impact-quiet {
+  0%,
+  75% {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reward-impact {
+    animation: impact-quiet 1100ms both !important;
+  }
+  .reward-impact b,
+  .reward-impact i {
     animation: none !important;
   }
 }

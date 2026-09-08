@@ -15,6 +15,11 @@ const compile = spawnSync(
     '--outDir',
     '.test-build',
     'tests/game.test.ts',
+    'tests/campaign.test.ts',
+    'tests/motion.test.ts',
+    'tests/tutorial.test.ts',
+    'tests/landline.test.ts',
+    'tests/polish.test.ts',
   ],
   { stdio: 'inherit' },
 );
@@ -23,7 +28,15 @@ mkdirSync('.test-build', { recursive: true });
 writeFileSync('.test-build/package.json', '{"type":"commonjs"}');
 const result = spawnSync(
   process.execPath,
-  ['--test', '.test-build/tests/game.test.js'],
+  [
+    '--test',
+    '.test-build/tests/game.test.js',
+    '.test-build/tests/campaign.test.js',
+    '.test-build/tests/motion.test.js',
+    '.test-build/tests/tutorial.test.js',
+    '.test-build/tests/landline.test.js',
+    '.test-build/tests/polish.test.js',
+  ],
   { stdio: 'inherit' },
 );
 process.exit(result.status ?? 1);

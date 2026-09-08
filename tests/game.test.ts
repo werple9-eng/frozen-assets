@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GameModel, UPGRADES, layout, type Upgrade } from '../lib/game/model';
+class LegacyModel extends GameModel {
+  constructor(saved?: string | null) {
+    super(saved, { legacy: true });
+  }
+}
 import { IceField, surface } from '../lib/game/ice';
 import { TUNE } from '../lib/game/tuning';
 import { TrayRotation } from '../lib/game/rotation';
-import { SKILLS, skillState } from '../lib/game/skills';
+import {
+  SKILLS,
+  skillState,
+  nodeBounds,
+  connectionPoints,
+} from '../lib/game/skills';
 import { TreePan } from '../lib/game/pan';
 import { COSTS } from '../lib/game/progression';
 const tick = (g: GameModel, seconds: number) => {
@@ -16,8 +26,59 @@ const freeAll = (g: GameModel) => {
   tick(g, 0.2);
 };
 
-test('physical ice and treasure are enlarged without changing save topology', () => {
-  const g = new GameModel();
+void test('full upgrade cards and routed edges never intersect other card bounds', () => {
+  for (const n of SKILLS) {
+    const a = nodeBounds(n);
+    for (const other of SKILLS.filter((o) => o.id !== n.id)) {
+      const b = nodeBounds(other);
+      assert.ok(
+        a.right + 30 < b.left ||
+          a.left - 30 > b.right ||
+          a.bottom + 30 < b.top ||
+          a.top - 30 > b.bottom,
+        `${n.id} overlaps ${other.id}`,
+      );
+    }
+    const points = connectionPoints(n);
+    for (let i = 1; i < points.length; i++)
+      for (const other of SKILLS) {
+        const b = nodeBounds(other),
+          p = points[i - 1],
+          q = points[i];
+        const intersects =
+          p.x === q.x
+            ? p.x > b.left &&
+              p.x < b.right &&
+              Math.max(p.y, q.y) > b.top &&
+              Math.min(p.y, q.y) < b.bottom
+            : p.y > b.top &&
+              p.y < b.bottom &&
+              Math.max(p.x, q.x) > b.left &&
+              Math.min(p.x, q.x) < b.right;
+        assert.equal(
+          intersects,
+          false,
+          `${n.id} connection crosses ${other.id}`,
+        );
+      }
+  }
+});
+void test('each tray landing emits one impact without crediting the reward twice', () => {
+  const g = new LegacyModel();
+  const hits: string[] = [];
+  g.onImpact = (t) => hits.push(t.id);
+  freeAll(g);
+  const money = g.money;
+  tick(g, 2);
+  assert.equal(hits.length, 2);
+  assert.equal(new Set(hits).size, 2);
+  assert.equal(g.money, money);
+  tick(g, 2);
+  assert.equal(hits.length, 2);
+});
+
+void test('physical ice and treasure are enlarged without changing save topology', () => {
+  const g = new LegacyModel();
   assert.equal(g.field.values.length, 23 * 14 * 15);
   assert.equal(g.loot[0].w, 0.58 * TUNE.worldScale);
   const xs = g.field.points
@@ -29,12 +90,12 @@ test('physical ice and treasure are enlarged without changing save topology', ()
   oldSave.money = 35;
   oldSave.earned = 35;
   oldSave.ice[1000] = 0.61;
-  const h = new GameModel(JSON.stringify(oldSave));
+  const h = new LegacyModel(JSON.stringify(oldSave));
   assert.equal(h.money, 35);
   assert.ok(Math.abs(h.field.values[1000] - 0.61) < 0.00001);
 });
-test('skill fittings enforce prerequisites, stale selections and atomic spending', () => {
-  const g = new GameModel();
+void test('skill fittings enforce prerequisites, stale selections and atomic spending', () => {
+  const g = new LegacyModel();
   g.money = g.earned = 10000;
   g.pause();
   assert.equal(g.purchaseSkill('heat-4', 1000), false);
@@ -60,7 +121,7 @@ test('skill fittings enforce prerequisites, stale selections and atomic spending
   assert.equal(g.purchaseSkill('wide-1', 1400), true);
   assert.equal(g.selectMode('wide'), true);
   assert.equal(g.purchaseSkill('heat-2', 1800), true);
-  const saved = new GameModel(g.serialize());
+  const saved = new LegacyModel(g.serialize());
   assert.equal(saved.money, 9810);
   assert.deepEqual(saved.upgrades, g.upgrades);
   assert.equal(
@@ -73,22 +134,22 @@ test('skill fittings enforce prerequisites, stale selections and atomic spending
   assert.equal(saved.mode, 'wide');
 });
 
-test('new comfort preferences round-trip and old saves receive safe defaults', () => {
-  const g = new GameModel();
+void test('new comfort preferences round-trip and old saves receive safe defaults', () => {
+  const g = new LegacyModel();
   g.setSetting('reducedMotion', true);
   g.setSetting('rotationSensitivity', 0.8);
-  const h = new GameModel(g.serialize());
+  const h = new LegacyModel(g.serialize());
   assert.equal(h.settings.reducedMotion, true);
   assert.equal(h.settings.rotationSensitivity, 0.8);
   const old = JSON.parse(g.serialize());
   delete old.settings.rotationSensitivity;
   delete old.settings.reducedMotion;
-  const legacy = new GameModel(JSON.stringify(old));
+  const legacy = new LegacyModel(JSON.stringify(old));
   assert.equal(legacy.settings.reducedMotion, false);
   assert.equal(legacy.settings.rotationSensitivity, 0.5);
 });
 
-test('turntable accelerates, carries small momentum, settles, and never flips', () => {
+void test('turntable accelerates, carries small momentum, settles, and never flips', () => {
   const r = new TrayRotation();
   r.begin();
   r.move(200, 100000);
@@ -114,8 +175,8 @@ test('turntable accelerates, carries small momentum, settles, and never flips', 
   assert.ok(Math.abs(Math.sin(r.yaw)) < 0.00001);
   assert.ok(Math.abs(r.tilt) < 0.00001);
 });
-test('upgrade menu purchases work while paused without advancing the simulation', () => {
-  const g = new GameModel();
+void test('upgrade menu purchases work while paused without advancing the simulation', () => {
+  const g = new LegacyModel();
   g.money = 315;
   g.earned = 315;
   g.pause();
@@ -136,8 +197,8 @@ test('upgrade menu purchases work while paused without advancing the simulation'
   assert.equal(g.purchase('heat', 2000), false);
 });
 
-test('rewards are immediate, exactly once, and reject stale identities', () => {
-  const g = new GameModel(),
+void test('rewards are immediate, exactly once, and reject stale identities', () => {
+  const g = new LegacyModel(),
     t = g.loot[0];
   g.field.values.fill(0);
   tick(g, 0.2);
@@ -148,8 +209,8 @@ test('rewards are immediate, exactly once, and reject stale identities', () => {
   assert.equal(g.credit(t), false);
   assert.equal(g.money, 0);
 });
-test('purchases are atomic, affordable, bounded, and debounced', () => {
-  const g = new GameModel();
+void test('purchases are atomic, affordable, bounded, and debounced', () => {
+  const g = new LegacyModel();
   assert.equal(g.purchase('heat', 1000), false);
   g.money = 35;
   g.earned = 35;
@@ -169,14 +230,14 @@ test('purchases are atomic, affordable, bounded, and debounced', () => {
     assert.equal(g.upgrades[key], UPGRADES[key].costs.length);
   assert.ok(g.money >= 0);
 });
-test('first heat step increases actual local removal by 14 percent', () => {
-  const a = new GameModel(),
-    b = new GameModel();
+void test('first heat step increases actual local removal by 14 percent', () => {
+  const a = new LegacyModel(),
+    b = new LegacyModel();
   b.upgrades.heat = 1;
   const p = { x: 0, y: 1.7, z: 0.9 };
   a.field.melt(p, 0.1, a.power, a.radius);
   b.field.melt(p, 0.1, b.power, b.radius);
-  const initial = new GameModel();
+  const initial = new LegacyModel();
   let da = 0,
     db = 0;
   for (let i = 0; i < a.field.values.length; i++) {
@@ -185,8 +246,8 @@ test('first heat step increases actual local removal by 14 percent', () => {
   }
   assert.ok(Math.abs(db / da - 1.14) < 0.001);
 });
-test('fuel only drains while firing, including empty space; refill preserves thaw and money', () => {
-  const g = new GameModel();
+void test('fuel only drains while firing, including empty space; refill preserves thaw and money', () => {
+  const g = new LegacyModel();
   const ice = Array.from(g.field.values);
   tick(g, 2);
   assert.equal(g.fuel, 75);
@@ -206,8 +267,8 @@ test('fuel only drains while firing, including empty space; refill preserves tha
   tick(g, 0.4);
   assert.equal(g.phase, 'playing');
 });
-test('pause and input cancellation require fresh firing input, including toggle mode', () => {
-  const g = new GameModel();
+void test('pause and input cancellation require fresh firing input, including toggle mode', () => {
+  const g = new LegacyModel();
   g.settings.toggle = true;
   g.press();
   assert.ok(g.firing);
@@ -226,8 +287,8 @@ test('pause and input cancellation require fresh firing input, including toggle 
   g.press();
   assert.equal(g.firing, false);
 });
-test('pause preserves in-progress refill and transition state', () => {
-  const g = new GameModel();
+void test('pause preserves in-progress refill and transition state', () => {
+  const g = new LegacyModel();
   g.refill();
   g.pause();
   tick(g, 1);
@@ -239,8 +300,8 @@ test('pause preserves in-progress refill and transition state', () => {
   tick(g, 1.3);
   assert.ok(g.round >= 1);
 });
-test('collection survives fuel exhaustion and menu pauses', () => {
-  const g = new GameModel();
+void test('collection survives fuel exhaustion and menu pauses', () => {
+  const g = new LegacyModel();
   g.fuel = 0.001;
   g.press();
   freeAll(g);
@@ -253,47 +314,50 @@ test('collection survives fuel exhaustion and menu pauses', () => {
   assert.equal(g.money, 70);
   assert.equal(g.round, 1);
 });
-test('save/load retains partial thaw, settings, mode and purchases', () => {
-  const g = new GameModel();
+void test('save/load retains partial thaw, settings, mode and purchases', () => {
+  const g = new LegacyModel();
   g.field.melt({ x: 0, y: 1.7, z: 0.9 }, 0.15, g.power, g.radius);
   g.upgrades.wide = 1;
   g.selectMode('wide');
   g.settings.master = 0.22;
-  const h = new GameModel(g.serialize());
+  const h = new LegacyModel(g.serialize());
   assert.equal(h.mode, 'wide');
   assert.equal(h.settings.master, 0.22);
   assert.equal(h.field.remaining(), g.field.remaining());
   assert.ok(h.field.values.some((v) => v > 0 && v < 0.9));
   assert.equal(h.firing, false);
 });
-test('reload during landing cannot award collected items again', () => {
-  const g = new GameModel();
+void test('reload during landing cannot award collected items again', () => {
+  const g = new LegacyModel();
   freeAll(g);
-  const h = new GameModel(g.serialize());
+  const h = new LegacyModel(g.serialize());
   assert.equal(h.money, 70);
   assert.ok(h.loot.every((t) => t.state === 'collected'));
   tick(h, 2);
   assert.equal(h.money, 70);
   assert.equal(h.round, 1);
 });
-test('missing, invalid, old, NaN and malformed saves start safely', () => {
+void test('missing, invalid, old, NaN and malformed saves start safely', () => {
   for (const raw of [
     'bad',
     '{}',
     'null',
     '{"version":1}',
-    JSON.stringify({ ...JSON.parse(new GameModel().serialize()), fuel: -1 }),
-    JSON.stringify({ ...JSON.parse(new GameModel().serialize()), ice: [1, 2] }),
+    JSON.stringify({ ...JSON.parse(new LegacyModel().serialize()), fuel: -1 }),
+    JSON.stringify({
+      ...JSON.parse(new LegacyModel().serialize()),
+      ice: [1, 2],
+    }),
   ]) {
-    const g = new GameModel(raw);
+    const g = new LegacyModel(raw);
     assert.equal(g.round, 0);
     assert.equal(g.money, 0);
     assert.equal(g.fuel, 75);
     assert.ok(g.field.remaining() > 0);
   }
 });
-test('nozzle choices are reversible, gated and cancel firing', () => {
-  const g = new GameModel();
+void test('nozzle choices are reversible, gated and cancel firing', () => {
+  const g = new LegacyModel();
   assert.equal(g.selectMode('wide'), false);
   g.upgrades.wide = 1;
   g.press();
@@ -305,8 +369,8 @@ test('nozzle choices are reversible, gated and cancel firing', () => {
   assert.ok(g.power > widePower);
   assert.equal(g.selectMode('bogus'), false);
 });
-test('restart clears pending loot, thaw, heat, state and reward timers', () => {
-  const g = new GameModel();
+void test('restart clears pending loot, thaw, heat, state and reward timers', () => {
+  const g = new LegacyModel();
   freeAll(g);
   g.field.warmth.fill(1);
   g.pause();
@@ -321,7 +385,7 @@ test('restart clears pending loot, thaw, heat, state and reward timers', () => {
   assert.ok(g.field.warmth.every((v) => v === 0));
   assert.ok(g.loot.every((t) => !t.credited));
 });
-test('cutting the cluster pedestal detaches its entire supported cap', () => {
+void test('cutting the cluster pedestal detaches its entire supported cap', () => {
   const f = new IceField(2);
   const before = f.remaining();
   for (let i = 0; i < f.values.length; i++)
@@ -332,7 +396,7 @@ test('cutting the cluster pedestal detaches its entire supported cap', () => {
   for (let i = 0; i < f.values.length; i++)
     if (f.points[i].y > 1.22) assert.ok(f.values[i] <= 0.5);
 });
-test('all authored layouts have stable unique identities and recoverable contents', () => {
+void test('all authored layouts have stable unique identities and recoverable contents', () => {
   for (let round = 0; round < 24; round++) {
     const loot = layout(round),
       f = new IceField(round);
@@ -342,8 +406,8 @@ test('all authored layouts have stable unique identities and recoverable content
     assert.ok(loot.every((t) => f.canRelease(t)));
   }
 });
-test('all 20 rounds complete, ending persists, continue and restart work', () => {
-  const g = new GameModel();
+void test('all 20 rounds complete, ending persists, continue and restart work', () => {
+  const g = new LegacyModel();
   let expected = 0;
   for (let round = 0; round < 20; round++) {
     assert.equal(g.round, round);
@@ -351,9 +415,12 @@ test('all 20 rounds complete, ending persists, continue and restart work', () =>
     freeAll(g);
     tick(g, 2);
   }
+  // The final presentation has its own 550ms finish after the last landing.
+  for (let i = 0; i < 60 && g.phase !== 'completed'; i++)
+    g.update(1 / 60, null);
   assert.equal(g.phase, 'completed');
   assert.equal(g.earned, expected);
-  const h = new GameModel(g.serialize());
+  const h = new LegacyModel(g.serialize());
   assert.equal(h.phase, 'completed');
   h.continuePlaying();
   assert.equal(h.round, 20);
@@ -363,7 +430,7 @@ test('all 20 rounds complete, ending persists, continue and restart work', () =>
   assert.equal(h.round, 0);
   assert.equal(h.money, 0);
 });
-test('meshing follows the authoritative field and produces finite triangles', () => {
+void test('meshing follows the authoritative field and produces finite triangles', () => {
   const f = new IceField();
   const before = surface(f);
   assert.ok(before.positions.length > 0);
@@ -377,16 +444,17 @@ test('meshing follows the authoritative field and produces finite triangles', ()
   assert.equal(surface(f).positions.length, 0);
 });
 
-test('old equipment migrates once without reducing power, fuel, money or thaw', () => {
-  const g = new GameModel();
+void test('old equipment migrates once without reducing power, fuel, money or thaw', () => {
+  const g = new LegacyModel();
   const raw = JSON.parse(g.serialize());
   delete raw.progression;
+  delete raw.toolUpgrades;
   raw.upgrades = { heat: 2, tank: 2, residual: 2, wide: 1 };
   raw.fuel = 155;
   raw.money = 245;
   raw.earned = 3000;
   raw.ice[900] = 0.42;
-  const migrated = new GameModel(JSON.stringify(raw));
+  const migrated = new LegacyModel(JSON.stringify(raw));
   assert.equal(migrated.saveStatus, 'saved');
   assert.deepEqual(migrated.upgrades, {
     heat: 7,
@@ -399,13 +467,13 @@ test('old equipment migrates once without reducing power, fuel, money or thaw', 
   assert.equal(migrated.residual, 2);
   assert.equal(migrated.money, 245);
   assert.ok(Math.abs(migrated.field.values[900] - 0.42) < 0.00001);
-  const reload = new GameModel(migrated.serialize());
+  const reload = new LegacyModel(migrated.serialize());
   assert.deepEqual(reload.upgrades, migrated.upgrades);
 });
-test('tree provides 42 unique steps, four opening choices and a longer cost curve', () => {
+void test('tree provides 42 unique steps, four opening choices and a longer cost curve', () => {
   assert.equal(SKILLS.length, 42);
   assert.equal(new Set(SKILLS.map((n) => n.id)).size, 42);
-  const g = new GameModel();
+  const g = new LegacyModel();
   assert.equal(
     SKILLS.filter((n) => skillState(n, g.upgrades) === 'available').length,
     4,
@@ -423,8 +491,8 @@ test('tree provides 42 unique steps, four opening choices and a longer cost curv
       );
   }
 });
-test('fuel and torch milestones alter real simulation and respect pause', () => {
-  const g = new GameModel();
+void test('fuel and torch milestones alter real simulation and respect pause', () => {
+  const g = new LegacyModel();
   g.upgrades.tank = 8;
   g.fuel = 10;
   tick(g, 2);
@@ -452,7 +520,7 @@ test('fuel and torch milestones alter real simulation and respect pause', () => 
   assert.ok(g.radius > TUNE.wideRadius);
   assert.ok(Number.isFinite(g.power));
 });
-test('tree panning has bounded inertia, settles, and cancels cleanly', () => {
+void test('tree panning has bounded inertia, settles, and cancels cleanly', () => {
   const p = new TreePan();
   p.minX = -500;
   p.maxX = 500;
@@ -467,13 +535,16 @@ test('tree panning has bounded inertia, settles, and cancels cleanly', () => {
   for (let i = 0; i < 600; i++) p.update(1 / 60);
   assert.equal(p.vx, 0);
   assert.equal(p.vy, 0);
-  assert.ok(p.x < 190);
+  assert.ok(
+    p.x > 125 && p.x < 190,
+    'a fast release coasts briefly without drifting across the map',
+  );
   p.begin();
   p.drag(1e6, -1e6, 0.01);
   p.end();
-  for (let i = 0; i < 10; i++) p.update(0.03);
-  assert.equal(p.x, 500);
-  assert.equal(p.y, -600);
+  for (let i = 0; i < 180; i++) p.update(0.03);
+  assert.ok(p.x <= 500 && p.x > 440);
+  assert.ok(p.y >= -600 && p.y < -540);
   p.cancel();
   assert.equal(p.vx, 0);
   assert.equal(p.dragging, false);

@@ -17,13 +17,13 @@ export const TUNE = {
   connectivityInterval: 0.16,
   gravity: 13 * 2.9,
   landingPause: 0.23,
-  collectionTime: 0.34,
+  collectionTime: 0.8,
   transitionTime: 0.38,
   particleCap: 48,
   fragmentCap: 18,
   audioVoices: 12,
   finalRound: 20,
-  saveVersion: 3,
+  saveVersion: 4,
   rotationSensitivity: 0.007,
   rotationSpring: 150,
   rotationDamping: 25,
@@ -48,6 +48,9 @@ export type Loot = {
   age: number;
   vy: number;
   credited: boolean;
+  story?: import('./campaign-content').StoryObjectId;
+  variant?: number;
+  name?: string;
 };
 export const FAMILY_NAMES = [
   'Loose change',
