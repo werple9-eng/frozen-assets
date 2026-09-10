@@ -5,7 +5,7 @@ import { blockSpec } from '../lib/game/campaign-content';
 import { IceField } from '../lib/game/ice';
 import { CARGO_LAYOUT_VERSION, materialAt } from '../lib/game/ice-grid';
 
-void test('all five Vault phases retain sealed physical pockets, constant spacing, budgets and their exact payout shares', () => {
+void test('all five Vault phases retain solidly packed cargo, constant spacing, budgets and their exact payout shares', () => {
   const phaseValues = [5500, 4840, 5500, 3960, 2200];
   const itemValues = [
     [367, 1466, 367, 1467, 366, 1467],
@@ -42,7 +42,7 @@ void test('all five Vault phases retain sealed physical pockets, constant spacin
     );
     items.forEach((item, index) => {
       assert.equal(item.id, `v3-c31-${phase}-${item.story ? 'story' : index}`);
-      assert.equal(field.solidIntersectionCount(item), 0, item.id);
+      assert.ok(field.solidIntersectionCount(item) > 0, item.id);
       assert.equal(field.exposure(item).exposed, 0, item.id);
       assert.equal(field.canRelease(item), false, item.id);
     });

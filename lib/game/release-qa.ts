@@ -55,6 +55,14 @@ export function cutReleasePassage(
   }
   for (let i = 0; i < field.points.length; i++) {
     const p = field.points[i];
+    // Create the clearance this fixture promises. Fresh cargo no longer starts
+    // inside a pre-carved air box, so a narrow passage alone cannot free it.
+    if (
+      Math.abs(p.x - item.x) < item.w / 2 + field.grid.cellSize &&
+      Math.abs(p.y - item.y) < item.h / 2 + field.grid.cellSize &&
+      Math.abs(p.z - item.z) < item.d / 2 + field.grid.cellSize
+    )
+      field.values[i] = 0;
     for (let n = 1; n < path.length; n++) {
       const a = path[n - 1],
         b = path[n];

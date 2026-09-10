@@ -277,7 +277,7 @@ void test('collateral crosses a real pocket gap only after outside exposure open
     vy: 0,
     credited: false,
   };
-  field.carveLoot([item]);
+  field.carveLoot([item], true);
   const gap = field.grid.cellSize * 0.85;
   close(gap, 0.255);
   const input = impact({

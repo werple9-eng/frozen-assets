@@ -93,7 +93,7 @@ export class GameScene {
     tool?: ToolId;
   } | null = null;
   renderer: THREE.WebGLRenderer;
-  keyLight = new THREE.DirectionalLight(0xeaf2f5, 2.4);
+  keyLight = new THREE.DirectionalLight(0xeaf2f5, 1.55);
   graphicsSignature = '';
   scene = new THREE.Scene();
   assembly = new THREE.Group();
@@ -216,7 +216,7 @@ export class GameScene {
     this.renderer.shadowMap.type = THREE.VSMShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.95;
+    this.renderer.toneMappingExposure = 0.78;
     this.renderer.domElement.setAttribute(
       'aria-label',
       '3D recovery tray. Click with the starter chisel; hold with later equipment. Drag empty tray to turn. Q and E also turn.',
@@ -228,7 +228,7 @@ export class GameScene {
     this.camera.far = 70;
     this.assembly.position.y = 0.65;
     this.scene.add(this.assembly);
-    this.scene.add(new THREE.HemisphereLight(0xc4d8df, 0x3a3f3b, 1.55));
+    this.scene.add(new THREE.HemisphereLight(0xc4d8df, 0x3a3f3b, 1.05));
     const key = this.keyLight;
     key.position.set(-4, 22, 10);
     key.castShadow = true;
@@ -246,7 +246,7 @@ export class GameScene {
     key.shadow.radius = 2;
     key.shadow.blurSamples = 8;
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0xbcd7e2, 1.7);
+    const rim = new THREE.DirectionalLight(0xbcd7e2, 1.05);
     rim.position.set(7, 10, -8);
     this.scene.add(rim);
     const mat = (c: number, m = 0, r = 0.5) =>
@@ -1276,7 +1276,7 @@ export class GameScene {
     }
     const ice = { minX, maxX, minY, maxY };
     const props = this.projectWorkbench();
-    const { span, x, y, minSpan } = workshopFrame(
+    const { span, x, y } = workshopFrame(
       ice,
       props,
       a,
@@ -1286,14 +1286,8 @@ export class GameScene {
     this.framing.span += (span - this.framing.span) * blend;
     this.framing.x += (x - this.framing.x) * blend;
     this.framing.y += (y - this.framing.y) * blend;
-    // Protect the whole cluster during rotation and the camera's spring, too.
     const introSpan =
-      Math.max(
-        this.framing.span,
-        minSpan + Math.abs(y - this.framing.y),
-        minSpan + Math.abs(x - this.framing.x) / a,
-      ) *
-      (1 + Math.max(0, this.entry.value) * 0.13);
+      this.framing.span * (1 + Math.max(0, this.entry.value) * 0.13);
     this.camera.left = this.framing.x - introSpan * a;
     this.camera.right = this.framing.x + introSpan * a;
     this.camera.top = this.framing.y + introSpan;
@@ -1730,7 +1724,10 @@ export class GameScene {
     this.lastToolPointer.copy(this.pointer);
     follower.followPosition(dt, pointerSpeed);
     this.toolOut.copy(follower.smoothedNormal);
-    follower.orient(this.camera.position);
+    follower.orient(
+      this.camera.position,
+      ['pick', 'heavy'].includes(this.model.toolId ?? 'hand'),
+    );
     const toolScale = Math.min(
       1.2,
       Math.max(0.38, Math.sqrt(this.model.campaignScale ?? 1)),

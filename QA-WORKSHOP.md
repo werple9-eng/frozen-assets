@@ -1,5 +1,51 @@
 # Workshop atmosphere and graphics
 
+## Current follow-up: solid packing and clearer onboarding
+
+- Fresh tutorial, campaign and contract assets no longer have voxel boxes cut
+  around them at spawn. Old saves refill only sealed authored cavities; opened
+  excavations stay removed. Save records carry a packing revision. Actual mesh
+  contact still releases and credits assets on the next update.
+- Reduced exposure, overhead light, ambient fill, key and rim light. The pick
+  and heavy pick now hang handle-down on vertical ice, pivoting at the tip.
+- Gameplay zoom frames the ice more closely at its default midpoint and reaches
+  6.73 times that magnification at maximum. The longer slider retains a wide
+  view at minimum. Desk props stay fixed in world space; extreme close-ups can
+  crop them. The upgrade-map zoom remains independent.
+- The first tutorial recovery uses Delivery Complete. Continue dismisses the
+  receipt in one action. Upgrades and Hold to Chip receive gold lesson cues,
+  with a static cue under Reduced motion. Tutorial copy describes ice clearance.
+- Removed the persistent Phone button, Toggle to fire setting and Show results
+  step. Old toggle preferences restore to normal press/release input.
+- Fifteen routine equipment/handling calls are filed in Recovery Files silently.
+  Other calls wait for three quiet seconds, with 45 seconds between completed
+  calls during play. Required final-vault conversations and ending transitions
+  retain their progression gates and commission effects.
+
+Validation for this follow-up:
+
+- **265 tests passed**, including packed faces at every asset placement, sealed
+  and opened old-save migration, receipt-to-Hold-to-Chip progression, call
+  cadence, and the existing 966 real-tool/phase release runs.
+- **6,768 rendered release cases passed**, across **376 objects / 81 phases**,
+  sampling **1,965,932 actual mesh contact points**. The matching headless
+  release corpus and 20–144 FPS save/reload cases passed too.
+- **16 live contact poses passed** for the chisel and pick, including both tilt
+  limits, side faces, edges and rotations, with depth testing enabled.
+- **24 live graphics/zoom switches passed**. Wide-view props, shared room scale,
+  quality budgets, reduced motion and bounded allocations were checked.
+- Visually checked softer lighting, packed coins, upright pick head, extreme
+  zoom, the tutorial receipt, both gold highlights and Settings. The full
+  tutorial sequence completed through 32 save/reload checkpoints.
+- TypeScript, lint, formatting, production build and whitespace checks passed.
+  Browser checks used the memory-only practice save; player slots were untouched.
+
+The old external-ice budgets excluded cargo cavities. Budget regression tests
+now account separately for the filled packing volume; tools were tested against
+the actual new solid fields. Earlier timings below belong to the previous pass.
+
+## Previous atmosphere pass (5721e6e)
+
 The room now shares the delivery scale with the phone and tray. Previously the
 room root was accidentally included in the static-matrix freeze, leaving its
 props at full size outside the small early-game workshop. Static child meshes

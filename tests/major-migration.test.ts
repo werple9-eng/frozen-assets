@@ -137,7 +137,7 @@ void test('unsafe size/profile migrations restart only active ice, keep identiti
   assert.ok(
     migrated.loot
       .filter((t) => !t.credited)
-      .every((t) => migrated.field.solidIntersectionCount(t) === 0),
+      .every((t) => migrated.field.solidIntersectionCount(t) > 0),
   );
   const canonical = legacyCargoLoot(record);
   assert.deepEqual(

@@ -91,7 +91,7 @@ void test('an opened campaign pocket releases without clearing its distant roof 
     vy: 0,
     credited: false,
   };
-  field.carveLoot([item]);
+  field.carveLoot([item], true);
   assert.equal(
     field.canRelease(item),
     false,
@@ -139,14 +139,22 @@ void test('loading a tutorial save with already-cleared suspended cargo recovers
   forceTutorialStep(m, 12);
   const item = m.loot[0];
   leaveDistantRoof(m.field, item);
-  assert.equal(item.state, 'embedded', 'save the old stuck state before updating');
+  assert.equal(
+    item.state,
+    'embedded',
+    'save the old stuck state before updating',
+  );
   const restored = new GameModel(m.serialize());
   const target = restored.loot.find((t) => t.id === item.id)!;
   const strikes = restored.strikeSerial;
   restored.update(0.001, null);
   assert.equal(target.credited, true);
   assert.notEqual(target.state, 'embedded');
-  assert.equal(restored.strikeSerial, strikes, 'recovery requires no extra strike');
+  assert.equal(
+    restored.strikeSerial,
+    strikes,
+    'recovery requires no extra strike',
+  );
   const money = restored.money;
   restored.update(0.001, null);
   assert.equal(restored.money, money);

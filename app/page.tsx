@@ -556,7 +556,7 @@ export default function Home() {
             (document.activeElement as HTMLElement)?.click();
             return;
           }
-          if (m.settlement && !m.inTutorial && !menuRef.current) {
+          if (m.settlement && !menuRef.current) {
             m.skipSettlement();
             return;
           }
@@ -801,6 +801,11 @@ export default function Home() {
       {active !== 'skills' && (
         <nav aria-label="Station menus" data-active={active || 'bench'}>
           <TactileButton
+            className={
+              s.tutorial?.step === 7 && s.tutorial.stage !== 'done'
+                ? 'tutorial-upgrades-target'
+                : undefined
+            }
             disabled={
               !!s.tutorial && s.tutorial.stage !== 'done' && s.tutorial.step < 7
             }
@@ -840,7 +845,7 @@ export default function Home() {
     handlingTag?: HandlingTag | null;
   };
   const guide =
-    teaching && s.tutorial?.message ? (
+    teaching && s.tutorial?.message && !s.settlement ? (
       <TonyPanel
         line={s.tutorial.message}
         speed={s.settings.textSpeed}
@@ -1151,16 +1156,6 @@ export default function Home() {
             </TactileButton>
           )}
         </div>
-        {s.campaign && !teaching && (
-          <TactileButton
-            className={`phone-shortcut ${s.campaign.unread ? 'unread' : ''}`}
-            data-hud
-            onClick={() => action((m) => m.answerPhone())}
-          >
-            Phone {s.campaign.unread ? `· ${s.campaign.unread}` : ''}
-            <kbd>P</kbd>
-          </TactileButton>
-        )}
       </div>
       {testing && (
         <>
@@ -1216,7 +1211,7 @@ export default function Home() {
           <i />
         </div>
       ))}
-      {s.settlement && !teaching && !menu && (
+      {s.settlement && !menu && (
         <DeliveryComplete
           settlement={s.settlement}
           remaining={s.settlementTime}
@@ -1227,34 +1222,6 @@ export default function Home() {
           advance={() => action((m) => m.skipSettlement())}
           sound={() => scene.current?.audio.sound('delivery')}
         />
-      )}
-      {s.settlement && teaching && !menu && (
-        <aside className="settlement" aria-label="Recovery settlement">
-          <small>{s.settlement.name} · SETTLED</small>
-          <div>
-            Recovered{' '}
-            <b>
-              <SpringNumber value={s.settlement.gross} />
-            </b>
-          </div>
-          <div>
-            Tony&apos;s cut · {s.settlement.rate}%{' '}
-            <b>
-              −<SpringNumber value={s.settlement.fee} />
-            </b>
-          </div>
-          <div className="keep">
-            You keep{' '}
-            <b>
-              <SpringNumber value={s.settlement.net} />
-            </b>
-          </div>
-          {!teaching && (
-            <TactileButton onClick={() => action((m) => m.skipSettlement())}>
-              Next delivery
-            </TactileButton>
-          )}
-        </aside>
       )}
       <Dialog
         open={menu === 'phone'}
@@ -1303,6 +1270,7 @@ export default function Home() {
       >
         <DialogContent
           className={`station-screen skill-screen ${comfortClass}`}
+          data-tutorial={teaching ? s.tutorial?.step : undefined}
           onFocus={(event) => {
             // The dialog's focus guard restores focus to its container after
             // Tony's button unmounts; hand that restoration to the next task.
@@ -1542,19 +1510,13 @@ export default function Home() {
                 [
                   ['dialogueSounds', 'Dialogue type sounds'],
                   ['muted', 'Mute audio'],
-                  ['toggle', 'Toggle to fire'],
                   ['reducedParticles', 'Fewer particles'],
                   ['reducedMotion', 'Reduced motion'],
                   ['largeUI', 'Larger interface text'],
                 ] as const
               ).map(([key, label]) => (
                 <div className="setting-switch" key={key}>
-                  <label htmlFor={`${key}-switch`}>
-                    {label}
-                    {key === 'toggle' && (
-                      <small>Click ice to start; click again to stop.</small>
-                    )}
-                  </label>
+                  <label htmlFor={`${key}-switch`}>{label}</label>
                   <Switch
                     id={`${key}-switch`}
                     checked={s.settings[key]}

@@ -106,6 +106,7 @@ export function runTutorialSequence(reload = false) {
       m.finishTutorialBoard();
     } else if (t.stage === 'chapter') m.finishTutorial();
     else if (m.phoneRinging) m.answerPhone();
+    else if (m.settlement) m.skipSettlement();
     else if (tutorialMessage(t)) m.advanceTutorial();
     else if (t.step === 7) m.tutorialMenu('skills');
     else if (t.step === 8) {

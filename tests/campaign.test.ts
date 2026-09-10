@@ -181,7 +181,8 @@ void test('story queues during striking, persists through reload, delivers at qu
   const saved = structuredClone(c.state);
   const restored = new Campaign();
   restored.restore(saved);
-  assert.equal(restored.advanceQuiet(1, false), true);
+  assert.equal(restored.advanceQuiet(1, false), false);
+  assert.equal(restored.advanceQuiet(2.1, false), true);
   assert.equal(restored.unread, 1);
   restored.openPhone();
   assert.equal(restored.unread, 0);

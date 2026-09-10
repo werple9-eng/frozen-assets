@@ -89,7 +89,7 @@ void test('early archive and estate lessons reserve reinforcement for their smal
   }
 });
 
-void test('all historical cargo phases preserve identities without intersections or unreleasable rewards', () => {
+void test('all historical cargo phases preserve identities with packed ice and releasable rewards', () => {
   for (const sourceLayoutVersion of [1, 2] as const)
     for (let block = 0; block < 32; block++)
       for (
@@ -111,9 +111,8 @@ void test('all historical cargo phases preserve identities without intersections
         const field = campaignField(block, phase);
         field.carveLoot(loot);
         for (const t of loot) {
-          assert.equal(
-            field.solidIntersectionCount(t),
-            0,
+          assert.ok(
+            field.solidIntersectionCount(t) > 0,
             `overlap ${sourceLayoutVersion}:${block}:${sourcePhase}:${t.id}`,
           );
         }

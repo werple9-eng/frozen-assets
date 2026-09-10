@@ -61,6 +61,7 @@ export async function contactAudit(s: GameScene) {
     s.automation = undefined;
     s.cancelInput();
     m.restart();
+    m.settings.gameplayZoom = 0.4;
     m.campaign!.state.pending = [];
     m.pause(false);
     m.emit();
@@ -79,13 +80,17 @@ export async function contactAudit(s: GameScene) {
         s.turntable.yaw = s.turntable.targetYaw = pose.yaw;
         s.turntable.tilt = s.turntable.targetTilt = pose.tilt;
         s.turntable.velocity = s.turntable.tiltVelocity = 0;
-        const scale = m.field.profile!.scale * TUNE.worldScale;
+        const {
+          physicalWidth: width,
+          physicalHeight: height,
+          physicalDepth: iceDepth,
+        } = m.field.grid;
         s.automation = () => {
           point
             .set(
-              pose.x * 1.7 * scale,
-              pose.side ? 0.8 * scale : 2.2 * scale,
-              pose.z * 1.32 * scale,
+              pose.x * width * 0.4,
+              pose.side ? height * 0.35 : height * 0.84,
+              pose.z * iceDepth * 0.42,
             )
             .applyMatrix4(s.ice.matrixWorld)
             .project(s.camera);

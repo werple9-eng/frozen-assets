@@ -275,7 +275,7 @@ export function DeliveryComplete({
           onClick={advance}
           disabled={remaining > 1.6}
         >
-          {ready ? 'Continue' : 'Show results'} <kbd>↵</kbd>
+          Continue <kbd>↵</kbd>
         </TactileButton>
       </div>
     </dialog>

@@ -154,8 +154,8 @@ function install(model: GameModel, input: VariableFieldFixture) {
   };
   model.loot = [coin];
   model.field.carveLoot(model.loot);
-  // A fixture must never begin with interpenetration or free cargo.
-  if (model.field.solidIntersectionCount(coin) || model.field.canRelease(coin))
+  // Like campaign cargo, the demo coin must begin packed in actual ice.
+  if (!model.field.solidIntersectionCount(coin) || model.field.canRelease(coin))
     throw Error(
       'The chosen fixture cannot safely restrain its demo coin. Choose parcel/archive or larger dimensions.',
     );

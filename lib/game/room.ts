@@ -793,11 +793,11 @@ export class WorkshopRoom {
     this.lampShade.rotation.z = reduced ? 0 : shake * 0.004;
     // Lights are authored in desk-local units as well. Compensate attenuation
     // when the workshop scales, so the tutorial isn't washed out by tiny distances.
-    this.overheadLight.intensity = 34 * scale ** this.overheadLight.decay;
+    this.overheadLight.intensity = 18 * scale ** this.overheadLight.decay;
     this.overheadLight.distance = 46 * scale;
     this.lampLight.distance = 24 * scale;
     this.lampLight.intensity =
-      38 *
+      24 *
       scale ** this.lampLight.decay *
       (reduced
         ? 1

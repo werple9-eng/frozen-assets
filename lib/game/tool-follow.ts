@@ -19,10 +19,12 @@ export class ToolFollow {
   private up = new Vector3(0, 1, 0);
   private tilt = new Quaternion();
   private authoredAxis = new Vector3(1, 0, 0);
+  private handleDown = false;
   // +Y leaves the contact surface; +Z runs toward the authored handle.
   // World-up supplies the side-face tangent. A horizontal camera preference
   // smoothly supplies the tangent as that projection vanishes on top faces.
-  orient(cameraPosition: Vector3) {
+  orient(cameraPosition: Vector3, handleDown = false) {
+    this.handleDown = handleDown;
     const n = this.smoothedNormal;
     this.along
       .copy(cameraPosition)
@@ -30,14 +32,17 @@ export class ToolFollow {
       .setY(0)
       .normalize()
       .multiplyScalar(Math.abs(n.y) ** 4);
-    this.along.addScaledVector(this.up, 1 - Math.abs(n.y) ** 4);
+    this.along.addScaledVector(
+      this.up,
+      (1 - Math.abs(n.y) ** 4) * (handleDown ? -1 : 1),
+    );
     this.along.addScaledVector(n, -this.along.dot(n));
     if (this.along.lengthSq() < 0.0001)
       this.along.set(0, 0, 1).addScaledVector(n, -n.z);
     if (this.along.lengthSq() < 0.0001)
       this.along.set(1, 0, 0).addScaledVector(n, -n.x);
     this.along.normalize();
-    if (this.along.y < -0.001) this.along.negate();
+    if (!handleDown && this.along.y < -0.001) this.along.negate();
     this.across.crossVectors(n, this.along).normalize();
     this.along.crossVectors(this.across, n).normalize();
     this.basis.makeBasis(this.across, n, this.along);
@@ -48,7 +53,7 @@ export class ToolFollow {
   }
   guardHemisphere() {
     this.along.set(0, 0, 1).applyQuaternion(this.targetRotation);
-    if (this.along.y < -0.02)
+    if (!this.handleDown && this.along.y < -0.02)
       this.targetRotation.premultiply(
         this.tilt.setFromAxisAngle(this.smoothedNormal, Math.PI),
       );

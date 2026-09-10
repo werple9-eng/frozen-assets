@@ -96,6 +96,7 @@ export class Campaign {
     settled: false,
   };
   quiet = 0;
+  private callCooldown = 0;
   lastDelivered?: string;
   onMilestone: (id: Milestone) => void = () => {};
   get block() {
@@ -157,12 +158,42 @@ export class Campaign {
     }
   }
   advanceQuiet(dt: number, busy: boolean) {
+    this.callCooldown = Math.max(0, this.callCooldown - dt);
+    this.fileRoutineNotes();
     if (this.state.call) return false;
     this.quiet = busy ? 0 : this.quiet + dt;
-    if (this.quiet < 0.8 || !this.state.pending.length) return false;
+    if (
+      this.quiet < (this.state.complete ? 0.8 : 3) ||
+      (this.callCooldown > 0 && !this.state.complete) ||
+      !this.state.pending.length
+    )
+      return false;
     const delivered = this.deliver();
     if (delivered) this.quiet = 0;
     return !!delivered;
+  }
+  private fileRoutineNotes() {
+    const routine = (e: StoryEvent) =>
+      !e.effect &&
+      !e.readEffect &&
+      (e.id.startsWith('handling.') ||
+        e.id.startsWith('equipment.') ||
+        ['ch1.more', 'ch2.accounts', 'ch4.breaker', 'ch4.thermal'].includes(
+          e.id,
+        ));
+    // Preserve every note and prerequisite without making the player answer
+    // a second call just because a tool unlocked. Active conversations finish.
+    for (const event of STORY) {
+      if (!routine(event) || !this.canDeliver(event)) continue;
+      if (this.state.call?.event === event.id) {
+        if (this.state.call.status === 'active') continue;
+        this.state.call = undefined;
+      } else if (!this.state.pending.includes(event.id)) continue;
+      if (!this.state.history.includes(event.id))
+        this.state.history.push(event.id);
+      if (!this.state.read.includes(event.id)) this.state.read.push(event.id);
+      this.state.pending = this.state.pending.filter((id) => id !== event.id);
+    }
   }
   private canDeliver(event: StoryEvent) {
     if (event.requiresRead?.some((id) => !this.state.read.includes(id)))
@@ -242,6 +273,7 @@ export class Campaign {
     this.state.read.push(id);
     this.state.pending = this.state.pending.filter((pending) => pending !== id);
     this.state.call = undefined;
+    this.callCooldown = 45;
     let refund = 0;
     if (commission !== undefined) {
       this.state.commission = commission;

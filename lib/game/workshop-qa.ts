@@ -66,7 +66,10 @@ export async function workshopGraphicsAudit(scene: GameScene) {
                   bottom = Math.max(bottom, (1 - point.y) / 2);
                 }
             props[name] = { left, right, top, bottom };
-            if (left < 0.015 || right > 0.985 || top < 0.06 || bottom > 0.94)
+            if (
+              zoom === 0 &&
+              (left < 0.015 || right > 0.985 || top < 0.06 || bottom > 0.94)
+            )
               failures.push(`${quality}/${zoom}: ${name} outside usable frame`);
           }
           if (zoom === 1) {

@@ -18,20 +18,26 @@ export function workshopFrame(
     maxX = Math.max(ice.maxX, props.maxX);
   const minY = Math.min(ice.minY, props.minY),
     maxY = Math.max(ice.maxY, props.maxY);
-  const x = (minX + maxX) / 2;
+  const z = Math.max(0, Math.min(1, zoom));
+  const focus = Math.min(1, z / 0.45);
+  const x =
+    ((minX + maxX) / 2) * (1 - focus) + ((ice.minX + ice.maxX) / 2) * focus;
   const minSpan = Math.max(
     (maxX - minX) / (2 * aspect * 0.85),
     (maxY - minY) / (2 * 0.7),
   );
-  const y = (minY + maxY) / 2 + minSpan * 0.035;
-  const base = Math.max(
-    minSpan * 1.12,
-    (ice.maxX - ice.minX) / (2 * aspect * 0.6),
-    (ice.maxY - ice.minY) / 1.12,
+  const y =
+    ((minY + maxY) / 2 + minSpan * 0.035) * (1 - focus) +
+    ((ice.minY + ice.maxY) / 2) * focus;
+  const close = Math.max(
+    (ice.maxX - ice.minX) / (2 * aspect * 0.82),
+    (ice.maxY - ice.minY) / 1.48,
   );
-  const span = Math.max(
-    minSpan,
-    base / 2 ** ((Math.max(0, Math.min(1, zoom)) - 0.5) * 0.75),
-  );
+  // Wide establishes the workshop; the middle frames the ice. Beyond that,
+  // freely inspect a small part of the block instead of clamping to desk props.
+  const span =
+    z <= 0.5
+      ? minSpan * 1.12 * (close / (minSpan * 1.12)) ** (z * 2)
+      : close / 2 ** ((z - 0.5) * 5.5);
   return { x, y, span, minSpan, minX, maxX, minY, maxY };
 }

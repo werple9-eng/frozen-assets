@@ -335,7 +335,12 @@ export class IceField {
             (dz ? z - iz : 1 - z + iz);
     return density;
   }
-  carveLoot(loot: Loot[]) {
+  carveLoot(loot: Loot[], legacyCavities = false) {
+    // Cargo is frozen into the solid volume. Cutting a voxel-sized box around
+    // its mesh makes a visible air room, especially around thin coins. The
+    // transparent outer surface needs no such subtraction; actual mesh contact
+    // still decides release as the player removes the surrounding ice.
+    if (!legacyCavities) return;
     for (const t of loot) {
       if (
         (t.story || !this.grid.legacy) &&
@@ -381,6 +386,36 @@ export class IceField {
           this.values[i] = 0;
       }
     }
+    this.revision++;
+    this.markAllDirty();
+  }
+  repairLegacyCavities(loot: Loot[], packed: Float32Array) {
+    // Only refill completely sealed, machine-authored cavities in old saves.
+    // An opened pocket belongs to the player's excavation and stays untouched.
+    const saved = this.values.slice();
+    this.carveLoot(loot, true);
+    this.values.set(saved);
+    this.revision++;
+    for (const t of loot) {
+      if (
+        t.state !== 'embedded' ||
+        !this.pocketSeeds.has(t.id) ||
+        this.pocketConnectsOutside(t.id)
+      )
+        continue;
+      const padding = this.grid.cellSize * 0.85;
+      this.points.forEach((p, i) => {
+        if (
+          saved[i] === 0 &&
+          Math.abs(p.x - t.x) <= t.w / 2 + padding &&
+          Math.abs(p.y - t.y) <= t.h / 2 + padding &&
+          Math.abs(p.z - t.z) <= t.d / 2 + padding
+        )
+          this.values[i] = packed[i];
+      });
+    }
+    this.pocketRestraints.clear();
+    this.pocketSeeds.clear();
     this.revision++;
     this.markAllDirty();
   }
@@ -657,8 +692,8 @@ export class IceField {
     return this.outsideAir[seed] === 1;
   }
   canRelease(t: Loot, contactSamples?: Vec3[]) {
-    // Pristine cargo has an authored air cavity to avoid ice intersecting its
-    // mesh. Only an entirely hidden, still-encased pocket needs that distinction.
+    // Historical cavity fixtures need to distinguish sealed air from cleared
+    // ice. New cargo has solid packing and does not enter this legacy branch.
     // As soon as it opens to the outside, remaining remote walls or roof cannot
     // restrain the object: only actual mesh contact below can do that.
     if (

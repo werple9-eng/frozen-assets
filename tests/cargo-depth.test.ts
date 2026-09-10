@@ -28,7 +28,7 @@ function pocket() {
     vy: 0,
     credited: false,
   };
-  field.carveLoot([item]);
+  field.carveLoot([item], true);
   return { field, item };
 }
 const strike = { center: 1, depth: 1, weak: 1, support: 1, detach: 1 };
@@ -100,14 +100,14 @@ void test('removing distant ice cannot expose a sealed object and item movement 
   assert.equal(field.exposure(item).exposed, 1);
 });
 
-void test('all authored deliveries begin with hidden, non-intersecting cargo held by actual ice', () => {
+void test('all authored deliveries begin with hidden cargo packed into solid ice held by actual ice', () => {
   for (let block = 0; block < BLOCKS.length; block++)
     for (let phase = 0; phase < BLOCKS[block].phases; phase++) {
       const field = campaignField(block, phase, undefined, 3),
         items = campaignLoot(block, phase, 3);
       field.carveLoot(items);
       for (const item of items) {
-        assert.equal(field.solidIntersectionCount(item), 0, item.id);
+        assert.ok(field.solidIntersectionCount(item) > 0, item.id);
         assert.equal(field.canRelease(item), false, item.id);
         assert.equal(
           field.exposure(item).exposed,

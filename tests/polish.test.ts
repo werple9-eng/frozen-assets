@@ -811,7 +811,7 @@ void test('contact frame keeps the authored handle upright across top, corner an
     }
   assert.ok(maxStep <= 14 / 120 + 0.00001);
 });
-void test('delivery settlement waits, skips only the intro, persists stats, credits once and then advances', () => {
+void test('delivery settlement persists stats and one Continue advances without replaying credits', () => {
   const m = new GameModel(),
     c = m.campaign!;
   c.state.pending = [];
@@ -831,8 +831,6 @@ void test('delivery settlement waits, skips only the intro, persists stats, cred
   m.skipSettlement();
   assert.ok(m.settlementTime > 0);
   for (let i = 0; i < 18; i++) m.update(0.05, null);
-  m.skipSettlement();
-  assert.equal(m.settlementTime, 0);
   assert.equal(m.round, 0);
   const copy = new GameModel(m.serialize());
   assert.equal(copy.saveStatus, 'saved');

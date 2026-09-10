@@ -155,7 +155,7 @@ void test('material hardness, support strength, fracture ease and conductivity a
   );
 });
 
-void test('variable-grid evidence cavities stay held until local visible restraints are removed', () => {
+void test('variable-grid packed evidence stays held until local visible restraints are removed', () => {
   for (const id of [
     'tag',
     'ring',
@@ -167,7 +167,7 @@ void test('variable-grid evidence cavities stay held until local visible restrai
     const f = variable(spec(5, 4, 3));
     const t = { ...evidence(id), y: 2.1 };
     f.carveLoot([t]);
-    assert.equal(f.solidIntersectionCount(t), 0, id);
+    assert.ok(f.solidIntersectionCount(t) > 0, id);
     assert.equal(f.canRelease(t), false, id);
     f.points.forEach((p, i) => {
       if (Math.hypot(p.x - t.x, p.y - t.y, p.z - t.z) < 1.5) f.values[i] = 0;
@@ -242,7 +242,7 @@ void test('D19 authored tower never borrows historical final-round dimensions', 
   );
 });
 
-void test('all six small evidence items occupy real cavities but retain actual surrounding ice', () => {
+void test('all six small evidence items start packed in actual surrounding ice', () => {
   for (const id of [
     'tag',
     'ring',
@@ -255,7 +255,7 @@ void test('all six small evidence items occupy real cavities but retain actual s
     const t = evidence(id);
     assert.ok(field.solidIntersectionCount(t) > 0, id);
     field.carveLoot([t]);
-    assert.equal(field.solidIntersectionCount(t), 0, id);
+    assert.ok(field.solidIntersectionCount(t) > 0, id);
     assert.equal(
       field.canRelease(t),
       false,
@@ -468,18 +468,23 @@ void test('all 32 authored deliveries meet physical budgets with deterministic c
       assert.equal(new Set(loot.map((t) => t.id)).size, loot.length);
       f.carveLoot(loot);
       const solid = f.remaining();
+      // The authored outer-shell budgets predate solid cargo packing. Account
+      // explicitly for the now-filled cavity volume instead of shrinking ice.
+      const historical = campaignField(delivery, phase, undefined, 3);
+      historical.carveLoot(loot, true);
+      const packing = solid - historical.remaining();
       assert.ok(
         solid >= p.targetSolidSamples.min * 0.88 &&
-          solid <= p.targetSolidSamples.max * 1.12,
+          solid <= p.targetSolidSamples.max * 1.12 + packing,
         `delivery ${delivery + 1} phase ${phase + 1}: ${solid} solid samples outside ${p.targetSolidSamples.min}–${p.targetSolidSamples.max}`,
       );
       assert.equal(
         Object.values(f.materialCounts()).reduce((s, n) => s + n, 0),
         solid,
       );
-      if (!phase) firstSolids.push(solid);
+      if (!phase) firstSolids.push(solid - packing);
       for (const t of loot) {
-        assert.equal(f.solidIntersectionCount(t), 0, t.id);
+        assert.ok(f.solidIntersectionCount(t) > 0, t.id);
         assert.equal(
           f.canRelease(t),
           false,
@@ -513,7 +518,7 @@ void test('all 32 authored deliveries meet physical budgets with deterministic c
   for (const relief of [5, 11, 18, 25])
     assert.ok(
       firstSolids[relief] < firstSolids[relief - 1],
-      `D${relief + 1} is a physical victory lap`,
+      `D${relief + 1} retains its lighter outer shell`,
     );
   const early = firstSolids.slice(0, 5).reduce((s, n) => s + n, 0) / 5,
     late = firstSolids.slice(25, 31).reduce((s, n) => s + n, 0) / 6;
@@ -548,7 +553,7 @@ void test('postgame contracts combine deterministic structures, sizes, materials
       field.carveLoot(loot);
       assert.ok(
         loot.every(
-          (t) => !field.canRelease(t) && field.solidIntersectionCount(t) === 0,
+          (t) => !field.canRelease(t) && field.solidIntersectionCount(t) > 0,
         ),
       );
       gross += loot.reduce((s, t) => s + t.value, 0);

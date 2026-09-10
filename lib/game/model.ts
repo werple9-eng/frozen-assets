@@ -601,6 +601,7 @@ export class GameModel {
       const next = t.step + 1;
       if (next === 1) this.loadTutorialBlock(1);
       if (next === 7) {
+        if (this.settlement) return false;
         this.settlement = null;
         this.settlementTime = 0;
       }
@@ -752,14 +753,15 @@ export class GameModel {
     );
   }
   skipSettlement() {
-    if (!this.settlement || this.inTutorial || this.settlementTime > 1.6)
-      return;
-    if (this.settlementTime > 0) {
-      this.settlementTime = 0;
-      this.emit();
+    if (!this.settlement || this.settlementTime > 1.6) return;
+    this.settlementTime = 0;
+    this.settlement = null;
+    if (this.inTutorial) {
+      if (!this.tutorial!.flags.includes('first-receipt-seen'))
+        this.tutorial!.flags.push('first-receipt-seen');
+      this.tutorialStep(6);
       return;
     }
-    this.settlement = null;
     if (this.campaign?.state.complete && !this.campaign.state.contracts) {
       this.phase = 'completing';
       this.elapsed = 0;
@@ -1744,6 +1746,13 @@ export class GameModel {
             net: c.state.blockGross - c.state.blockFee,
             rate: 12,
             name: 'Your first recovery',
+            ...this.deliveryStats,
+            nextGoal: {
+              kind: 'upgrade',
+              name: 'Hold to Chip',
+              cost: CONTINUOUS_COST,
+              detail: 'Open Upgrades to fit your first improvement.',
+            },
           };
           this.tutorialStep(6);
         } else {
@@ -2263,6 +2272,7 @@ export class GameModel {
           sourceLayoutVersion,
         );
         oldField.carveLoot(sourceLoot);
+        const oldPacked = oldField.values.slice();
         let sourceValid = legacyDensityValid;
         if (s.version >= 5)
           sourceValid = decodeIceField(s.field, oldField, {
@@ -2270,6 +2280,8 @@ export class GameModel {
             phaseIndex: sourcePhase,
           }).ok;
         else if (sourceValid) oldField.values.set(s.ice);
+        if (sourceValid && !s.field?.packingVersion)
+          oldField.repairLegacyCavities(sourceLoot, oldPacked);
         let cargo = legacyCargoLoot(legacyCargo);
         migratedField = campaignField(c.block, targetPhase, undefined, 3);
         migratedField.carveLoot(cargo);
@@ -2514,7 +2526,10 @@ export class GameModel {
       }
       if (s.version >= 5 && !migratedField) {
         this.field.carveLoot(this.loot);
+        const packed = this.field.values.slice();
         const decoded = decodeIceField(s.field, this.field, this.fieldIdentity);
+        if (decoded.ok && !s.field?.packingVersion)
+          this.field.repairLegacyCavities(this.loot, packed);
         if (decoded.ok === false) {
           this.saveDiagnostics.push(
             `Current delivery regenerated: ${decoded.reason}. Money, upgrades, calls, evidence and credited rewards preserved.`,
@@ -2537,7 +2552,9 @@ export class GameModel {
       this.settlement = null;
       this.settlementTime = 0;
       if (
-        (this.inTutorial && this.tutorial?.step === 6) ||
+        (this.inTutorial &&
+          this.tutorial?.step === 6 &&
+          !this.tutorial.flags.includes('first-receipt-seen')) ||
         (this.campaign?.state.settled &&
           (!this.campaign.state.complete || s.settlementPending))
       ) {
@@ -2564,7 +2581,6 @@ export class GameModel {
             this.settings[k] = Math.max(0, Math.min(1, s.settings[k]));
         for (const k of [
           'muted',
-          'toggle',
           'reducedParticles',
           'largeUI',
           'reducedMotion',
@@ -2573,6 +2589,7 @@ export class GameModel {
           if (typeof s.settings[k] === 'boolean')
             this.settings[k] = s.settings[k];
       }
+      this.settings.toggle = false;
       return true;
     } catch {
       this.saveStatus = 'invalid';

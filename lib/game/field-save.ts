@@ -5,6 +5,7 @@ export const FIELD_SAVE_ENCODING = 'u8-rle-base64' as const;
 export const MAX_SAVED_FIELD_SAMPLES = 250_000;
 export type FieldIdentity = { deliveryId: string; phaseIndex: number };
 export type SavedIceField = FieldIdentity & {
+  packingVersion?: number;
   encoding: typeof FIELD_SAVE_ENCODING;
   layoutVersion: number;
   layoutHash: string;
@@ -141,6 +142,7 @@ export function encodeIceField(
   const { layoutVersion, layoutHash, nx, ny, nz, cellSize } = field.grid;
   const density = toBase64(bytes.subarray(0, offset));
   return {
+    packingVersion: 1,
     encoding: FIELD_SAVE_ENCODING,
     layoutVersion,
     layoutHash,
