@@ -1,6 +1,12 @@
 import { confirmationSample, type ConfirmationKind } from './purchase-sound';
 import { TUNE } from './tuning';
 import { phoneRingSample, type PhoneRing } from './phone-call';
+export type RoomState = {
+  ringing?: boolean;
+  inCall?: boolean;
+  settlement?: boolean;
+  ice?: boolean;
+};
 export class GameAudio {
   ctx?: AudioContext;
   master?: GainNode;
@@ -20,6 +26,13 @@ export class GameAudio {
   ambience?: GainNode;
   ambienceFilter?: BiquadFilterNode;
   roomBeat = -1;
+  hum?: GainNode;
+  reverb?: ConvolverNode;
+  nextMidground = 0;
+  recentEvents: string[] = [];
+  compressorAt = 0;
+  compressorUntil = 0;
+  nextEventAt: Record<string, number> = {};
   lastUI = -Infinity;
   uiPlayed = 0;
   uiSuppressed = 0;
@@ -171,12 +184,105 @@ export class GameAudio {
         (0.22 + 0.06 * Math.sin(t * 6.283 * 39));
     }
     this.materials.set('phone', [buzz]);
+    const synth = (
+      kind: string,
+      duration: number,
+      make: (t: number, noise: number, i: number) => number,
+      variants = 2,
+    ) => {
+      const list: AudioBuffer[] = [];
+      for (let v = 0; v < variants; v++) {
+        const b = ctx.createBuffer(
+            1,
+            Math.ceil(ctx.sampleRate * duration),
+            ctx.sampleRate,
+          ),
+          d = b.getChannelData(0);
+        for (let i = 0; i < d.length; i++)
+          d[i] =
+            Math.min(1, i / (ctx.sampleRate * 0.0008)) *
+            make(i / ctx.sampleRate, Math.random() * 2 - 1, v);
+        list.push(b);
+      }
+      this.materials.set(kind, list);
+    };
+    // Ceramic tap, paper slide, conduit tick, distant door, distant cart, drip.
+    synth(
+      'mug',
+      0.1,
+      (t, n, v) =>
+        Math.sin(t * 6.283 * (2350 + v * 180)) * Math.exp(-t * 62) * 0.5 +
+        Math.sin(t * 6.283 * 3900) * Math.exp(-t * 95) * 0.18 +
+        n * Math.exp(-t * 900) * 0.15,
+    );
+    let slide = 0;
+    synth('paper', 0.17, (t, n) => {
+      slide = (slide + n * 0.5) / 1.35;
+      return (n - slide) * Math.min(1, t / 0.02) * Math.exp(-t * 20) * 0.28;
+    });
+    synth(
+      'knock',
+      0.13,
+      (t, n, v) =>
+        Math.sin(t * 6.283 * (1580 + v * 220)) * Math.exp(-t * 68) * 0.4 +
+        Math.sin(t * 6.283 * 2650) * Math.exp(-t * 110) * 0.14 +
+        n * Math.exp(-t * 600) * 0.2,
+    );
+    let low = 0;
+    synth('door', 0.55, (t, n) => {
+      low = (low + n * 0.25) / 1.25;
+      return (
+        low * Math.exp(-t * 8.5) * 0.7 +
+        Math.sin(t * 6.283 * 68) * Math.exp(-t * 13) * 0.35
+      );
+    });
+    let roll = 0;
+    synth('cart', 2.9, (t, n) => {
+      roll = (roll + n * 0.35) / 1.3;
+      const rattle = n * Math.exp(-((t * 4.7) % 1) * 9) * 0.12;
+      return (
+        (roll * (0.55 + 0.45 * Math.sin(t * 6.283 * 6.5)) + rattle) *
+        Math.sin((Math.PI * t) / 2.9) *
+        0.3
+      );
+    });
+    synth(
+      'drip',
+      0.15,
+      (t, n) =>
+        Math.sin(t * 6.283 * (1250 - t * 2200)) * Math.exp(-t * 38) * 0.36 +
+        n * Math.exp(-t * 500) * 0.05,
+    );
     this.master.gain.value = this.muted ? 0 : this.masterVolume * this.effects;
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -15;
     limiter.ratio.value = 7;
     this.master.connect(limiter);
     limiter.connect(ctx.destination);
+    // One short, damped room: ~0.3s tail, lowpassed so reflections stay small.
+    const ir = ctx.createBuffer(
+      2,
+      Math.floor(ctx.sampleRate * 0.34),
+      ctx.sampleRate,
+    );
+    for (let c = 0; c < 2; c++) {
+      const d = ir.getChannelData(c);
+      for (let i = 0; i < d.length; i++) {
+        const t = i / ctx.sampleRate;
+        d[i] =
+          t < 0.008 ? 0 : (Math.random() * 2 - 1) * Math.exp(-t * 11) * 0.5;
+      }
+    }
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = ir;
+    const reverbLow = ctx.createBiquadFilter();
+    reverbLow.type = 'lowpass';
+    reverbLow.frequency.value = 4200;
+    const reverbGain = ctx.createGain();
+    reverbGain.gain.value = 0.9;
+    this.reverb.connect(reverbLow);
+    reverbLow.connect(reverbGain);
+    reverbGain.connect(this.master);
     const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate),
       data = buffer.getChannelData(0);
     let last = 0;
@@ -218,6 +324,21 @@ export class GameAudio {
     this.ambience.connect(this.master);
     room.start();
     this.sources.push(room);
+    // Refrigeration undertone: a narrow band of the same noise, never a pure tone.
+    const humSource = ctx.createBufferSource();
+    humSource.buffer = buffer;
+    humSource.loop = true;
+    const humFilter = ctx.createBiquadFilter();
+    humFilter.type = 'bandpass';
+    humFilter.frequency.value = 92;
+    humFilter.Q.value = 3.2;
+    this.hum = ctx.createGain();
+    this.hum.gain.value = 0.02;
+    humSource.connect(humFilter);
+    humFilter.connect(this.hum);
+    this.hum.connect(this.master);
+    humSource.start();
+    this.sources.push(humSource);
     this.volume();
     for (const kind of [
       'purchase',
@@ -243,29 +364,76 @@ export class GameAudio {
         0.025,
       );
   }
-  room(time: number, paused: boolean, entering: number, vaultPhase?: number) {
+  // Three tiers. Background: HVAC bed and a refrigeration undertone with an
+  // irregular compressor cycle. Midground: rare, irregular building events that
+  // never repeat back to back and never interrupt a call. Foreground sounds are
+  // triggered by the objects themselves.
+  room(
+    time: number,
+    paused: boolean,
+    entering: number,
+    vaultPhase?: number,
+    state: RoomState = {},
+  ) {
     if (!this.ctx || !this.ambience || !this.ambienceFilter) return;
-    const compressor = time % 39 > 29;
+    const now = this.ctx.currentTime;
+    if (time >= this.compressorAt) {
+      this.compressorUntil = time + 8 + Math.random() * 8;
+      this.compressorAt = this.compressorUntil + 28 + Math.random() * 27;
+    }
+    const running = time < this.compressorUntil;
+    const bed =
+      (paused ? 0.014 : 0.036) *
+      (1 - entering * 0.7) *
+      (vaultPhase === 4 ? 0.25 : 1 + (vaultPhase ?? 0) * 0.12) *
+      (state.ringing ? 0.71 : 1) *
+      (state.settlement ? 0.85 : 1);
     this.ambience.gain.setTargetAtTime(
-      (paused ? 0.012 : 0.036) *
-        (1 - entering * 0.7) *
-        (compressor ? 1.3 : 1) *
-        (vaultPhase === 4 ? 0.25 : 1 + (vaultPhase ?? 0) * 0.12),
-      this.ctx.currentTime,
-      0.25,
+      bed * (running ? 1.25 : 1),
+      now,
+      running ? 1.4 : 2.2,
     );
     this.ambienceFilter.frequency.setTargetAtTime(
-      (compressor ? 210 : 145) +
-        (vaultPhase === 4 ? -45 : (vaultPhase ?? 0) * 18),
-      this.ctx.currentTime,
-      0.5,
+      (running ? 205 : 150) + (vaultPhase === 4 ? -45 : (vaultPhase ?? 0) * 18),
+      now,
+      0.8,
     );
-    const beat = Math.floor(time / 19);
-    if (beat !== this.roomBeat) {
-      if (this.roomBeat >= 0 && !paused)
-        this.physical(beat % 2 ? 'tray' : 'chip', 0.07);
-      this.roomBeat = beat;
-    }
+    this.hum?.gain.setTargetAtTime(
+      bed * (running ? 1.9 : 0.75),
+      now,
+      running ? 1.6 : 2.6,
+    );
+    if (!this.nextMidground) this.nextMidground = time + 6 + Math.random() * 6;
+    if (time < this.nextMidground || paused || state.inCall || state.ringing)
+      return;
+    const spans: Record<string, [number, number]> = {
+      knock: [18, 50],
+      door: [60, 150],
+      cart: [90, 180],
+      drip: [20, 55],
+    };
+    const candidates = Object.keys(spans).filter(
+      (k) =>
+        (k !== 'drip' || state.ice) &&
+        time >= (this.nextEventAt[k] ?? 0) &&
+        !this.recentEvents.includes(k),
+    );
+    this.nextMidground = time + 7 + Math.random() * 6;
+    if (!candidates.length) return;
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    const [min, max] = spans[pick];
+    this.nextEventAt[pick] = time + min + Math.random() * (max - min);
+    this.recentEvents = [pick, ...this.recentEvents].slice(0, 2);
+    this.physical(
+      pick,
+      pick === 'door'
+        ? 0.22
+        : pick === 'cart'
+          ? 0.14
+          : pick === 'drip'
+            ? 0.2
+            : 0.18,
+    );
   }
   fire(on: boolean, contact: boolean, wide = false) {
     if (!this.ctx) return;
@@ -312,6 +480,10 @@ export class GameAudio {
     };
   }
   sound(kind: string, intensity = 1) {
+    if (kind === 'mug' || kind === 'paper' || kind === 'knock') {
+      this.physical(kind, intensity);
+      return;
+    }
     if (kind === 'stamp') {
       this.physical('tray', 0.85);
       this.physical('cash', 0.5);
@@ -407,6 +579,14 @@ export class GameAudio {
       (0.97 + Math.random() * 0.06);
     src.connect(gain);
     gain.connect(this.master);
+    if (this.reverb) {
+      const wet = this.ctx.createGain();
+      wet.gain.value =
+        kind === 'crack' ? 0.07 : kind === 'phone' ? 0.025 : 0.045;
+      gain.connect(wet);
+      wet.connect(this.reverb);
+      src.addEventListener('ended', () => wet.disconnect());
+    }
     this.voices++;
     src.start();
     src.onended = () => {

@@ -31,7 +31,8 @@ const lamp = new THREE.MeshStandardMaterial({
   emissive: 0xc5b989,
   emissiveIntensity: 1,
 });
-for (const material of [metal, grip, black, brass, red, lamp]) sharedResource(material);
+for (const material of [metal, grip, black, brass, red, lamp])
+  sharedResource(material);
 function box(
   w: number,
   h: number,
@@ -266,6 +267,13 @@ export class Workshop {
   phoneBounce = new Spring(0, 260, 19);
   phoneHover = new Spring(0, 240, 24);
   phoneHovered = false;
+  filesHovered = false;
+  filesHover = new Spring(0, 240, 24);
+  filesLift = new Spring(0, 150, 18);
+  topFolder = new THREE.Group();
+  folderBodies: THREE.Mesh[] = [];
+  newTab?: THREE.Mesh;
+  redTab?: THREE.Mesh;
   handsetMaterial = new THREE.MeshStandardMaterial({
     color: 0xaaa78b,
     roughness: 0.76,
@@ -274,7 +282,7 @@ export class Workshop {
   });
   secondRing = -1;
   ring() {
-    this.phoneBounce.kick(3.7);
+    this.phoneBounce.kick(1.5);
     this.secondRing = 0.94;
   }
   labels: THREE.CanvasTexture[] = [];
@@ -434,12 +442,41 @@ export class Workshop {
     );
     this.phone.add(this.screen);
     this.phone.rotation.y = 0.13;
-    this.files.add(box(2.75, 0.12, 2, paper));
-    this.files.add(box(0.86, 0.13, 0.35, paper, -0.7, 0.01, -1.09));
-    this.files.add(box(2.4, 0.045, 1.6, plastic, 0.08, 0.09, 0.04));
-    this.files.add(box(2.7, 0.04, 1.84, paper, 0, 0.13, 0.1));
-    label('RECOVERY FILES', 2.3, 0.5, 0, 0.155, 0.25, this.files);
-    label('CALLS / PAPERS', 1.8, 0.3, 0, 0.157, 0.7, this.files);
+    // Three worn manila folders. The top one is the doorway to the archive.
+    const manila = new THREE.MeshStandardMaterial({
+      color: 0xb39d76,
+      roughness: 0.95,
+    });
+    const bottomFolder = box(2.7, 0.16, 1.9, manila, 0, 0.08, 0);
+    const middleFolder = box(2.6, 0.16, 1.85, manila, 0.06, 0.25, 0.05);
+    middleFolder.rotation.y = 0.04;
+    this.folderBodies.push(bottomFolder, middleFolder);
+    label('BELLWETHER CLAIM', 1.7, 0.28, -0.3, 0.165, 0.7, this.files);
+    label('PRESERVATION', 1.5, 0.26, 0.2, 0.335, 0.62, this.files);
+    const topBody = box(2.7, 0.18, 1.9, manila, 0, 0, 0);
+    this.folderBodies.push(topBody);
+    this.topFolder.add(topBody);
+    for (let i = 0; i < 3; i++)
+      this.topFolder.add(
+        box(2.5, 0.012, 1.7, paper, 0.02 * i, -0.04 + i * 0.03, 0.03 * i),
+      );
+    label('RECOVERY FILES', 2.2, 0.5, 0, 0.095, 0.05, this.topFolder);
+    label('BN-7C-114', 0.9, 0.2, 0.75, 0.096, -0.65, this.topFolder);
+    this.newTab = box(0.5, 0.03, 0.34, red, 1.55, 0.06, -0.45);
+    label('NEW', 0.42, 0.24, 1.55, 0.077, -0.45, this.topFolder).userData.tab =
+      true;
+    this.topFolder.add(this.newTab);
+    this.redTab = box(0.46, 0.03, 0.3, red, -0.3, 0.19, 1.05);
+    this.redTab.visible = false;
+    this.files.add(this.redTab);
+    this.topFolder.position.y = 0.36;
+    this.files.add(this.topFolder);
+    const filesProxy = new THREE.Mesh(
+      new THREE.BoxGeometry(3.6, 1.1, 2.6),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    filesProxy.position.y = 0.45;
+    this.files.add(filesProxy);
     this.files.rotation.y = -0.13;
     this.group.add(this.phone, this.files, this.display, this.rack);
     for (let i = 0; i < 2; i++) {
@@ -466,6 +503,7 @@ export class Workshop {
     reduced = false,
     ringing = false,
     offHook = false,
+    filesOpen = false,
   ) {
     reduced ||= matchMedia('(prefers-reduced-motion: reduce)').matches;
     const dt = this.lastTime ? Math.min(0.1, time - this.lastTime) : 1 / 60;
@@ -475,18 +513,37 @@ export class Workshop {
     this.group.position.y = -0.5;
     if (unread > this.lastUnread) this.buzzUntil = time + 0.45;
     this.lastUnread = unread;
-    this.phone.position.set(-8.6 * span, 0.225, -10.8 * span);
+    this.phone.position.set(-10.6 * span, 3.375, -8.8 * span);
     if (this.secondRing >= 0) {
       this.secondRing -= dt;
-      if (this.secondRing < 0 && ringing) this.phoneBounce.kick(3.2);
+      if (this.secondRing < 0 && ringing) this.phoneBounce.kick(1.1);
     }
     if (!ringing) this.secondRing = -1;
-    this.phoneHover.target = this.phoneHovered ? 0.06 : 0;
+    this.phoneHover.target = this.phoneHovered ? 0.016 : 0;
     const bounce = this.phoneBounce.step(dt, reduced),
       hover = this.phoneHover.step(dt, reduced);
     this.handsetMaterial.emissiveIntensity = hover * 1.5;
     this.phone.position.y += reduced ? 0 : bounce + hover;
-    this.files.position.set(-9 * span, 0.06, 0.4 * span);
+    this.files.position.set(-9.6 * span, 0, 8.2 * span);
+    this.filesHover.target = this.filesHovered ? 1 : 0;
+    this.filesLift.target = filesOpen ? 1 : 0;
+    const fileHover = this.filesHover.step(dt, reduced),
+      fileLift = this.filesLift.step(dt, reduced);
+    const thickness = 1 + Math.min(4, Math.max(0, chapter - 1)) * 0.28;
+    this.folderBodies[0].scale.y = thickness;
+    this.folderBodies[1].scale.y = thickness;
+    this.folderBodies[1].position.y = 0.25 + (thickness - 1) * 0.08;
+    this.topFolder.position.set(
+      0,
+      0.36 + (thickness - 1) * 0.24 + fileHover * 0.025 + fileLift * 0.45,
+      fileLift * 0.5,
+    );
+    this.topFolder.rotation.x = -fileLift * 0.32 + fileHover * 0.012;
+    this.topFolder.children[1].position.z = 0.03 + fileHover * 0.02;
+    if (this.newTab) this.newTab.visible = unread > 0;
+    for (const child of this.topFolder.children)
+      if (child.userData.tab) child.visible = unread > 0;
+    if (this.redTab) this.redTab.visible = chapter >= 3;
     this.phone.rotation.z = reduced
       ? 0
       : (ringing ? Math.sin(time * 42) * 0.006 : 0) + bounce * 0.13;
@@ -519,11 +576,11 @@ export class Workshop {
         this.resources.disposeGraph(group);
         group.clear();
       }
-      this.rack.add(box(8, 0.2, 1.4, grip, 5 * span, 0.1, -7 * span));
+      this.rack.add(box(9.5, 3.2, 0.25, grip, 9.6 * span, 6.2, -13.9 * span));
       for (const [i, id] of tools.filter((t) => t !== 'grip').entries()) {
         const t = toolMesh(id);
-        t.position.set(2 * span + i * 0.9, 0.2, -7 * span);
-        t.rotation.y = 0.15;
+        t.position.set(6.2 * span + i * 1.15, 7.4, -13.55 * span);
+        t.rotation.set(Math.PI / 2, 0, 0.08);
         t.userData.tool = id;
         if (!this.knownTools.has(id)) {
           const arrival = new Spring(
@@ -537,6 +594,9 @@ export class Workshop {
         this.rack.add(t);
       }
       tools.forEach((id) => this.knownTools.add(id));
+      this.display.add(
+        box(7.4, 0.18, 1.3, grip, -13.5 * span, 4.2, -13.6 * span),
+      );
       objects.forEach((id, i) => {
         const g = new THREE.Group();
         if (id === 'ring') {
@@ -570,7 +630,7 @@ export class Workshop {
           }
         }
         const bottom = new THREE.Box3().setFromObject(g).min.y;
-        g.position.set(8 * span, -bottom, -3 + i * 1.1);
+        g.position.set(-16.4 * span + i * 1.15, 4.35 - bottom, -13.55 * span);
         this.display.add(g);
       });
       if (chapter >= 3) {

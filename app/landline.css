@@ -150,29 +150,8 @@
   min-height: 56px;
   margin: 16px auto 0;
 }
-.files-shortcut {
-  position: absolute;
-  left: calc(var(--phone-x, 20vw) + 10px);
-  bottom: 120px;
-  z-index: 20;
-  background: #b7a36d;
-  color: #17291e;
-  padding: 14px 20px;
-  font: 900 24px var(--display-type);
-}
-.game-shell > .files-shortcut {
-  left: 5%;
-  bottom: 185px;
-}
-.game-shell:has(.incoming-call) > .phone-shortcut,
-.game-shell:has(.incoming-call) > .files-shortcut,
-.game-shell:has(.live-dialogue) > .phone-shortcut,
-.game-shell:has(.live-dialogue) > .files-shortcut,
-.game-shell:has(.phone-dial) > .phone-shortcut,
-.game-shell:has(.phone-dial) > .files-shortcut {
-  display: none;
-}
-.campaign-caption {
+.game-shell > .game-shell:has(.incoming-call) > .phone-shortcut,
+.game-shell:has(.incoming-call) > .campaign-caption {
   left: 50%;
   top: 112px;
   translate: -50% 0;
@@ -190,10 +169,6 @@
   font-size: 14px;
   line-height: 1.2;
   max-width: 480px;
-}
-.files-shortcut kbd {
-  font: 12px var(--bench-type);
-  margin-left: 12px;
 }
 .phone-screen {
   width: 100%;
@@ -332,10 +307,6 @@
   .phone-screen .phone-tabs > .read-instantly {
     flex-basis: 130px;
     font-size: 15px;
-  }
-  .files-shortcut {
-    left: 24px;
-    bottom: 112px;
   }
 }
 @media (max-width: 550px) {

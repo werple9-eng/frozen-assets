@@ -13,6 +13,7 @@ const { GameModel } = require('../.test-build/lib/game/model.js'),
     TOOL_TREES,
     TOOL_ORDER,
     NODE_BUDGET,
+    MECHANIC_NODE,
   } = require('../.test-build/lib/game/tool-trees.js');
 const branches = ['power', 'speed', 'control', 'technique'],
   policies = ['power', 'speed', 'control', 'technique'],
@@ -87,7 +88,7 @@ for (const tool of TOOL_ORDER) {
       m.loot = campaignLoot(block, phase);
       m.field.carveLoot(m.loot);
       m.nodes[tool] = choices[pi].nodes.map((n) => n.id);
-      if (tool === 'breaker' && m.hasNode('PB-C3'))
+      if (tool === 'breaker' && m.hasNode(MECHANIC_NODE.precisionBit))
         m.selectBreakerBit('precision');
       m.fuel = m.capacity;
       const ray = new THREE.Raycaster(),

@@ -365,7 +365,7 @@ export async function polishAudit(
         const p = s.workshop.phone.getWorldPosition(new THREE.Vector3()),
           base = p.clone();
         base.y -=
-          (s.workshop.phone.position.y - 0.225) * s.workshop.group.scale.y;
+          (s.workshop.phone.position.y - 3.375) * s.workshop.group.scale.y;
         peak = Math.max(
           peak,
           (Math.abs(p.project(s.camera).y - base.project(s.camera).y) *

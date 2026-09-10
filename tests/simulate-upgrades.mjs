@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url),
   { TOOLS, STORY } = require('../.test-build/lib/game/campaign-content.js'),
   {
     ALL_TOOL_NODES,
+    MECHANIC_NODE,
     nodeState,
     canonicalTool,
   } = require('../.test-build/lib/game/tool-trees.js');
@@ -101,7 +102,13 @@ const tutorialSeconds = clock;
 start = clock;
 while (m.phase !== 'completed' && clock < 150 * 60) {
   const c = m.campaign;
-  if (m.settlement) { if (m.settlementTime > 0) { m.update(.05,null); clock += .05; } else m.skipSettlement(); continue; }
+  if (m.settlement) {
+    if (m.settlementTime > 0) {
+      m.update(0.05, null);
+      clock += 0.05;
+    } else m.skipSettlement();
+    continue;
+  }
   if (m.round !== oldBlock) {
     blocks.push({
       block: oldBlock + 1,
@@ -243,7 +250,12 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
     // becoming cheapest-first whenever that fitting costs more than their wallet.
     // Normal players fit equipment they still use. The explicit cheapest-first
     // collector remains free to buy every inexpensive retired-tool node.
-    const working = reachable.filter(n => policy === 'cheapest-first' || n.toolId === canonicalTool(m.toolId) || n.toolId === canonicalTool(c.state.tools.at(-1)));
+    const working = reachable.filter(
+      (n) =>
+        policy === 'cheapest-first' ||
+        n.toolId === canonicalTool(m.toolId) ||
+        n.toolId === canonicalTool(c.state.tools.at(-1)),
+    );
     const available = preferred
       ? working.slice(0, 1).filter((n) => n.cost <= m.money)
       : working.filter((n) => n.cost <= m.money);
@@ -291,8 +303,13 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
     m.selectTool(preferred);
   const heatMode = shape === 'slab' ? 'wide' : 'precision';
   if (m.thermal && m.hasFan && m.mode !== heatMode) m.selectMode(heatMode);
-  const bit = shape === 'slab' && m.hasNode('PB-C4') ? 'wide' : 'precision';
-  if (m.toolId === 'breaker' && m.hasNode('PB-C3') && m.breakerBit !== bit)
+  const bit =
+    shape === 'slab' && m.hasNode(MECHANIC_NODE.wideBit) ? 'wide' : 'precision';
+  if (
+    m.toolId === 'breaker' &&
+    m.hasNode(MECHANIC_NODE.precisionBit) &&
+    m.breakerBit !== bit
+  )
     m.selectBreakerBit(bit);
   if (m.thermal && m.fuel <= 0.01) m.refill();
   if (refresh <= 0 && m.phase === 'playing') {

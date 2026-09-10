@@ -9,6 +9,7 @@ import { incomingCallPresentation, type IncomingCall } from './phone-call';
 import { TUNE, type Loot, type Vec3 } from './tuning';
 import { Workshop } from './workshop';
 import { WorkshopAir } from './atmosphere';
+import { WorkshopRoom } from './room';
 import { Spring, TOOL_MOTION } from './motion';
 import { ToolFollow } from './tool-follow';
 import { SceneResources } from './scene-resources';
@@ -39,6 +40,7 @@ export type SceneModel = {
   unread?: number;
   phoneRinging?: boolean;
   phoneOffHook?: boolean;
+  settlement?: object | null;
   dialing?: boolean;
   liveCall?: unknown;
   storyObjects?: StoryObjectId[];
@@ -170,10 +172,14 @@ export class GameScene {
   };
   workshop = new Workshop();
   air = new WorkshopAir();
+  room = new WorkshopRoom();
+  filesOpenRef?: { current: string | null };
+  lastFilesHover = false;
   deck = new THREE.Group();
   pedestal = new THREE.Group();
   onOpenPhone: () => void = () => {};
   onOpenFiles: () => void = () => {};
+  onMugClick: () => void = () => {};
   onDialKey: (key: string) => void = () => {};
   ringClock = 0;
   phoneFocus = { ringing: false, released: false, distance: Infinity };
@@ -209,9 +215,9 @@ export class GameScene {
     this.camera.far = 70;
     this.assembly.position.y = 0.65;
     this.scene.add(this.assembly);
-    this.scene.add(new THREE.HemisphereLight(0xc8e2eb, 0x34302b, 1.65));
-    const key = new THREE.DirectionalLight(0xffe8cd, 2.8);
-    key.position.set(-7, 22, 8);
+    this.scene.add(new THREE.HemisphereLight(0xc4d8df, 0x3a3f3b, 1.55));
+    const key = new THREE.DirectionalLight(0xeaf2f5, 2.4);
+    key.position.set(-4, 22, 10);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     Object.assign(key.shadow.camera, {
@@ -235,15 +241,13 @@ export class GameScene {
     const tray = mat(0x414d54, 0.58, 0.52),
       edge = mat(0x68737a, 0.65, 0.38),
       dark = mat(0x20272b, 0.25, 0.74);
-    this.scene.add(
-      this.box(45, 0.6, 40, this.deskMaterial(), 0, -0.8, 0, 0.12),
-    );
+    this.scene.add(this.room.group);
     const deck = this.deck;
     deck.scale.set(TUNE.trayScale, 1, TUNE.trayScale);
     this.assembly.add(deck);
     this.scene.add(this.workshop.group, this.workshop.hand);
     this.scene.add(this.air.group);
-    this.scene.fog = new THREE.FogExp2(0x314039, 0.007);
+    this.scene.fog = new THREE.Fog(0x3a4644, 34, 64);
     const pedestal = new THREE.Mesh(
       new THREE.CylinderGeometry(2.15, 2.45, 0.65, 64),
       dark,
@@ -1017,6 +1021,11 @@ export class GameScene {
         ev.clientY >= r.top &&
         ev.clientY <= r.bottom;
     };
+    if (process.env.NODE_ENV !== 'production')
+      on(window, 'recovery:clearance', ((ev: Event) =>
+        this.room.debugClearance(
+          !!(ev as CustomEvent).detail,
+        )) as EventListener);
     on(canvas, 'contextmenu', ((ev: Event) =>
       ev.preventDefault()) as EventListener);
     on(canvas, 'pointermove', ((ev: PointerEvent) => {
@@ -1069,6 +1078,15 @@ export class GameScene {
       ) {
         this.cancelInput();
         this.onOpenFiles();
+        return;
+      }
+      if (
+        ev.button === 0 &&
+        this.raycaster.intersectObject(this.room.mugProxy, false).length
+      ) {
+        this.cancelInput();
+        this.room.tapMug();
+        this.onMugClick();
         return;
       }
       if (
@@ -1216,28 +1234,34 @@ export class GameScene {
       sample(-5.8, 0, -4.7);
       sample(5.8, 2, 4.1);
     }
+    // A ringing landline is part of the shot until it is picked up.
+    if (this.model.phoneRinging && !this.model.phoneOffHook) {
+      const p = this.workshop.handset.getWorldPosition(new THREE.Vector3());
+      sample(p.x - 1.7, p.y - 0.5, p.z - 1.3);
+      sample(p.x + 1.7, p.y + 1.0, p.z + 1.3);
+    }
     const chapter = this.model.chapter ?? 1;
     const widthTarget = empty
       ? 0.85
       : this.model.inTutorial
-        ? 0.52
+        ? 0.6
         : chapter <= 2
-          ? 0.57
+          ? 0.58
           : chapter <= 4
-            ? 0.64
-            : 0.72;
+            ? 0.62
+            : 0.68;
     const heightTarget = this.model.inTutorial
-      ? 0.48
+      ? 0.5
       : chapter >= 4
-        ? 0.82
-        : 0.72;
+        ? 0.62
+        : 0.56;
     const span = Math.max(
       (maxX - minX) / (2 * a * widthTarget),
       (maxY - minY) / (2 * heightTarget),
     );
     const x = (minX + maxX) / 2;
     // Keep the upper work area steady when a call opens beneath it.
-    const y = (minY + maxY) / 2 + span * (this.model.inTutorial ? -0.16 : 0.08);
+    const y = (minY + maxY) / 2 + span * (this.model.inTutorial ? -0.24 : -0.2);
     const blend = 1 - Math.exp(-4.5 * dt);
     this.framing.span += (span - this.framing.span) * blend;
     this.framing.x += (x - this.framing.x) * blend;
@@ -1245,8 +1269,8 @@ export class GameScene {
     // Orthographic distance never changes: zoom cannot move the camera into a
     // tool or block. A projected-size guard keeps the complete solid usable.
     const safeRatio = Math.min(
-      (this.framing.span * 2 * 0.86) / Math.max(0.01, maxY - minY),
-      (this.framing.span * 2 * a * 0.87) / Math.max(0.01, maxX - minX),
+      (this.framing.span * 2 * 0.94) / Math.max(0.01, maxY - minY),
+      (this.framing.span * 2 * a * 0.95) / Math.max(0.01, maxX - minX),
     );
     this.cameraZoom.target = Math.min(
       safeRatio,
@@ -1404,6 +1428,7 @@ export class GameScene {
       this.model.settings?.reducedMotion,
       this.model.phoneRinging,
       this.model.phoneOffHook,
+      this.filesOpenRef?.current === 'phone',
     );
     if (
       this.model.phoneRinging &&
@@ -1443,7 +1468,23 @@ export class GameScene {
       recoil = this.recoil.step(rawDt, reduced);
     this.entry.step(rawDt, reduced);
     this.air.group.scale.setScalar(scale);
-    this.air.update(now / 1000, reduced, this.model.reducedParticles);
+    this.room.update(
+      scale,
+      this.model.chapter ?? 1,
+      !this.model.inTutorial,
+      reduced,
+      now / 1000,
+      rawDt,
+      recoil,
+    );
+    this.air.update(
+      now / 1000,
+      reduced,
+      this.model.reducedParticles,
+      rawDt,
+      this.room.lampWorld(),
+      this.room.lampTarget(),
+    );
     this.audio.room(
       now / 1000,
       this.model.paused || !!this.model.phoneOffHook,
@@ -1451,6 +1492,12 @@ export class GameScene {
       this.model.campaign?.state.block === 31
         ? (this.model.campaign.state.phase ?? 0)
         : undefined,
+      {
+        ringing: !!this.model.phoneRinging,
+        inCall: !!this.model.phoneOffHook,
+        settlement: !!this.model.settlement,
+        ice: !!this.ice.userData.deliveryBounds,
+      },
     );
     const deliveryFade = this.deliveryFade.step(rawDt, reduced);
     (this.ice.material as THREE.MeshPhysicalMaterial).opacity =
@@ -1469,6 +1516,7 @@ export class GameScene {
       this.deliveryLanded = true;
       this.recoil.kick(-4 * this.deliveryMass);
       this.audio.sound('tray', 0.32 + this.deliveryMass * 0.1);
+      this.air.impulse(0, 1.5, 0, 0.6 * this.deliveryMass);
       for (const x of [-4, 4])
         this.burst({ x, y: 0.25, z: 1 }, Math.ceil(4 * this.deliveryMass));
     }
@@ -1485,6 +1533,13 @@ export class GameScene {
       !this.model.paused &&
       this.raycaster.intersectObject(this.workshop.phone, true).length > 0;
     this.workshop.phoneHovered = phoneHover;
+    this.workshop.filesHovered =
+      this.raycaster.intersectObject(this.workshop.files, true).length > 0;
+    if (this.workshop.filesHovered && !this.lastFilesHover)
+      this.audio.sound('paper', 0.45);
+    this.lastFilesHover = this.workshop.filesHovered;
+    this.room.mugHovered =
+      this.raycaster.intersectObject(this.room.mugProxy, false).length > 0;
     this.renderer.domElement.dataset.contact = phoneHover
       ? 'phone'
       : hit

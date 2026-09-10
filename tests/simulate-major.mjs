@@ -12,7 +12,7 @@ const path = '../qa-artifacts/major-sim-build/lib/game/';
 const { GameModel } = require(`${path}model.js`);
 const { surface } = require(`${path}ice.js`);
 const { TOOLS, STORY, BLOCKS } = require(`${path}campaign-content.js`);
-const { ALL_TOOL_NODES, nodeState, canonicalTool } = require(
+const { ALL_TOOL_NODES, MECHANIC_NODE, nodeState, canonicalTool } = require(
   `${path}tool-trees.js`,
 );
 const { carriedEffects } = require(`${path}tree-migration.js`);
@@ -764,8 +764,8 @@ function chooseTool() {
         : t.id === 'breaker'
           ? [
               'standard',
-              ...(m.hasNode('PB-C3') ? ['precision'] : []),
-              ...(m.hasNode('PB-C4') ? ['wide'] : []),
+              ...(m.hasNode(MECHANIC_NODE.precisionBit) ? ['precision'] : []),
+              ...(m.hasNode(MECHANIC_NODE.wideBit) ? ['wide'] : []),
             ]
           : ['standard'];
     return variants.map((variant) => {
@@ -804,7 +804,7 @@ function chooseTool() {
           affinity *
           f.power *
           (variant === 'wide'
-            ? old.wide >= 9 || m.hasNode('TH-C5')
+            ? old.wide >= 9 || m.hasNode(MECHANIC_NODE.widePower)
               ? 0.8
               : old.wide >= 5
                 ? 0.65

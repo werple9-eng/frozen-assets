@@ -1,6 +1,7 @@
 import {
   carriedEffects,
   migrateTreeV1,
+  migrateTreeV2,
   validateCarry,
   type TreeCarry,
 } from './tree-migration';
@@ -40,6 +41,7 @@ import {
   freshNodes,
   nodeState,
   type MajorTool,
+  MECHANIC_NODE,
 } from './tool-trees';
 import {
   freshToolUpgrades,
@@ -255,7 +257,9 @@ export class GameModel {
     ].includes(id);
   }
   get hasFan() {
-    return this.hasNode('TH-C3') || this.toolUpgrades.thermal.wide > 0;
+    return (
+      this.hasNode(MECHANIC_NODE.fan) || this.toolUpgrades.thermal.wide > 0
+    );
   }
   dismissToolNotice() {
     this.toolNotice = null;
@@ -803,7 +807,7 @@ export class GameModel {
         (this.mode === 'precision' ? this.fittings.focusPower : 1)) /
         (this.campaign ? 1 : 1 + Math.min(this.round, 19) * 0.045)) *
       (this.mode === 'wide'
-        ? this.upgrades.wide >= 9 || this.hasNode('TH-C5')
+        ? this.upgrades.wide >= 9 || this.hasNode(MECHANIC_NODE.widePower)
           ? 0.8
           : this.upgrades.wide >= 5
             ? 0.65
@@ -1004,8 +1008,8 @@ export class GameModel {
   }
   selectBreakerBit(bit: 'standard' | 'precision' | 'wide') {
     if (
-      (bit === 'precision' && !this.hasNode('PB-C3')) ||
-      (bit === 'wide' && !this.hasNode('PB-C4'))
+      (bit === 'precision' && !this.hasNode(MECHANIC_NODE.precisionBit)) ||
+      (bit === 'wide' && !this.hasNode(MECHANIC_NODE.wideBit))
     )
       return false;
     this.stop();
@@ -1481,7 +1485,7 @@ export class GameModel {
         this.pulseTime += used;
         this.echoAnchor ??= { ...contact };
         if (
-          this.hasNode('TH-T4') &&
+          this.hasNode(MECHANIC_NODE.echo) &&
           Math.hypot(
             contact.x - this.echoAnchor.x,
             contact.y - this.echoAnchor.y,
@@ -1540,7 +1544,7 @@ export class GameModel {
         this.notify('Tank empty. Refill for free to keep going.');
       }
     } else {
-      if (this.lastContact && this.hasNode('TH-T4'))
+      if (this.lastContact && this.hasNode(MECHANIC_NODE.echo))
         this.echoes.push({
           point: { ...this.lastContact },
           time: 0.4,
@@ -1561,7 +1565,7 @@ export class GameModel {
       this.echoAnchor = null;
       if (this.residual)
         this.field.melt(null, dt, 0, this.radius, this.residual);
-      if (this.upgrades.tank >= 8 || this.hasNode('TH-S5'))
+      if (this.upgrades.tank >= 8 || this.hasNode(MECHANIC_NODE.refill))
         this.fuel = Math.min(this.capacity, this.fuel + dt * 2);
     }
     if (this.conditionCue && this.playTime > this.conditionCue.until)
@@ -2040,7 +2044,7 @@ export class GameModel {
       toolUpgrades: this.toolUpgrades,
       deliveryStats: this.deliveryStats,
       settlementPending: !!this.settlement,
-      treeRevision: 2,
+      treeRevision: 3,
       treeCarry: this.treeCarry,
       nodes: this.nodes,
       revealedTools: this.revealedTools,
@@ -2148,10 +2152,14 @@ export class GameModel {
       const tutorial = validateTutorial(s.tutorial);
       const nodes = freshNodes();
       if (s.treeRevision !== undefined) {
-        if (![1, 2].includes(s.treeRevision))
+        if (![1, 2, 3].includes(s.treeRevision))
           throw Error('Unknown tree revision');
-        if (s.treeRevision === 1) {
-          const migrated = migrateTreeV1(s.nodes);
+        if (s.treeRevision < 3) {
+          const v1 = s.treeRevision === 1 ? migrateTreeV1(s.nodes) : null;
+          const migrated = migrateTreeV2(
+            v1 ? v1.nodes : s.nodes,
+            v1 ? v1.carry : validateCarry(s.treeCarry),
+          );
           s.nodes = migrated.nodes;
           s.treeCarry = migrated.carry;
         }
@@ -2442,14 +2450,16 @@ export class GameModel {
           ? s.toolNotice
           : null;
       this.breakerBit =
-        s.breakerBit === 'precision' && nodes.breaker.includes('PB-C3')
+        s.breakerBit === 'precision' &&
+        nodes.breaker.includes(MECHANIC_NODE.precisionBit)
           ? 'precision'
-          : s.breakerBit === 'wide' && nodes.breaker.includes('PB-C4')
+          : s.breakerBit === 'wide' &&
+              nodes.breaker.includes(MECHANIC_NODE.wideBit)
             ? 'wide'
             : 'standard';
       this.mode =
         s.mode === 'wide' &&
-        (perTool.thermal.wide || nodes.thermal.includes('TH-C3'))
+        (perTool.thermal.wide || nodes.thermal.includes(MECHANIC_NODE.fan))
           ? 'wide'
           : 'precision';
       this.fuel = s.fuel;

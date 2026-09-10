@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ALL_TOOL_NODES,
+  FITTING_PRICES,
+  MECHANIC_NODE,
   NODE_PRICE_BANDS,
   TOOL_ORDER,
   TOOL_PRICES,
@@ -9,12 +11,14 @@ import {
   nodeState,
 } from '../lib/game/tool-trees';
 
-void test('price calibration keeps all 103 nodes, exact tool prices and the original authored bands', () => {
-  assert.equal(ALL_TOOL_NODES.length, 103);
-  assert.equal(new Set(ALL_TOOL_NODES.map((n) => n.id)).size, 103);
+const BRANCHES = ['power', 'speed', 'control', 'technique'] as const;
+
+void test('the compact maps hold 70 distinct fittings with exact tool prices and the authored bands', () => {
+  assert.equal(ALL_TOOL_NODES.length, 70);
+  assert.equal(new Set(ALL_TOOL_NODES.map((n) => n.id)).size, 70);
   assert.deepEqual(
     TOOL_ORDER.map((t) => TOOL_TREES[t].length),
-    [16, 17, 17, 17, 17, 19],
+    [11, 11, 12, 12, 11, 13],
   );
   assert.deepEqual(TOOL_PRICES, {
     hand: 0,
@@ -39,12 +43,74 @@ void test('price calibration keeps all 103 nodes, exact tool prices and the orig
     }
     const [min, max] = NODE_PRICE_BANDS[n.toolId][n.major ? 'major' : 'micro'];
     assert.ok(Number.isInteger(n.cost) && n.cost >= min && n.cost <= max, n.id);
-    if (n.rank >= (n.major ? 5 : 4))
-      assert.equal(n.cost, max, `${n.id}: deepest ranks retain their cap`);
   }
 });
 
-void test('first later-tool micro choices cost a meaningful budget while remaining affordable after acquisition', () => {
+void test('no fitting repeats another sentence, tiers stop at two, and every step is large enough to feel', () => {
+  for (const tool of TOOL_ORDER) {
+    const list = TOOL_TREES[tool];
+    const texts = list.map((n) => n.description),
+      names = list.map((n) => n.name);
+    assert.equal(
+      new Set(texts).size,
+      texts.length,
+      `${tool}: repeated description`,
+    );
+    assert.equal(new Set(names).size, names.length, `${tool}: repeated name`);
+    assert.ok(
+      !names.some((s) => /\b(I|II|III|IV)$/.test(s)),
+      `${tool}: roman tiers`,
+    );
+    for (const branch of BRANCHES) {
+      const chain = list.filter((n) => n.branch === branch);
+      assert.ok(chain.length >= 2 && chain.length <= 4, `${tool} ${branch}`);
+      assert.ok(
+        chain.some((n) => n.major),
+        `${tool} ${branch}: milestone`,
+      );
+      const fittings = chain.filter((n) => !n.major);
+      if (fittings[0]?.rank === 1)
+        assert.equal(fittings[0].cost, FITTING_PRICES[tool][0], fittings[0].id);
+      for (let i = 1; i < fittings.length; i++)
+        assert.ok(fittings[i].cost > fittings[i - 1].cost, fittings[i].id);
+    }
+    // The first fitting in each branch is available at once; deeper ranks wait.
+    assert.equal(
+      list.filter((n) => nodeState(n, []) === 'available').length,
+      4,
+    );
+  }
+  for (const n of ALL_TOOL_NODES) {
+    if (n.major) continue;
+    const [key, value] = Object.entries(n.effect)[0] as [string, number];
+    assert.notEqual(key, 'mechanic', n.id);
+    assert.ok(
+      Math.abs(Math.log(value)) >= Math.log(1.08) - 1e-9,
+      `${n.id}: ${key} ${value}`,
+    );
+  }
+  assert.deepEqual(MECHANIC_NODE, {
+    hold: 'HC-S1',
+    split: 'IP-P3',
+    rhythm: 'IP-S3',
+    momentum: 'HP-S3',
+    spall: 'HP-T2',
+    charge: 'SH-T1',
+    breakLoose: 'SH-T3',
+    hammer: 'PB-P3',
+    rapid: 'PB-S3',
+    precisionBit: 'PB-C2',
+    wideBit: 'PB-C3',
+    debrisKick: 'PB-T2',
+    whiteHot: 'TH-P3',
+    refill: 'TH-S3',
+    fan: 'TH-C2',
+    widePower: 'TH-C4',
+    echo: 'TH-T3',
+  });
+});
+
+void test('first later-tool fittings cost a meaningful budget while remaining affordable after acquisition', () => {
   const rootCosts = {
     pick: 280,
     heavy: 550,
@@ -68,8 +134,8 @@ void test('first later-tool micro choices cost a meaningful budget while remaini
   }
   assert.equal(
     TOOL_TREES.hand.reduce((s, n) => s + n.cost, 0),
-    3295,
-    'entire Chisel price schedule stays unchanged',
+    2475,
+    'Chisel price schedule: two fittings per branch plus unchanged milestones',
   );
   const openingPick = TOOL_TREES.pick.filter(
     (n) => !n.major && !n.parentIds.length,

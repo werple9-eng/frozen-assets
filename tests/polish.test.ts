@@ -23,7 +23,15 @@ import {
   TOOL_TREES as OLD_TREES,
   toolEffects as oldEffects,
 } from '../lib/game/legacy-tree';
-import { migrateTreeV1, carriedEffects } from '../lib/game/tree-migration';
+import {
+  migrateTreeV1,
+  migrateTreeV2,
+  carriedEffects,
+} from '../lib/game/tree-migration';
+import {
+  TOOL_TREES as V2_TREES,
+  toolEffects as v2Effects,
+} from '../lib/game/legacy-tree-v2';
 import { confirmationSample } from '../lib/game/purchase-sound';
 import {
   growthPlan,
@@ -37,15 +45,11 @@ void test('purchase growth reveals only the changed branch after its incoming pa
   assert.deepEqual(growth, [
     { id: 'IP-P2', from: 'locked', to: 'available', child: true },
     { id: 'IP-P3', from: 'unknown', to: 'locked', child: false },
-    { id: 'IP-P4', from: 'hidden', to: 'unknown', child: false },
   ]);
   assert.ok(
     TREE_GROWTH.revealAt >= TREE_GROWTH.pathDelay + TREE_GROWTH.pathDuration,
   );
-  assert.deepEqual(
-    growthPlan('pick', 'IP-P5', ['IP-P1', 'IP-P2', 'IP-P3', 'IP-P4']),
-    [],
-  );
+  assert.deepEqual(growthPlan('pick', 'IP-P3', ['IP-P1', 'IP-P2']), []);
 });
 
 void test('directional navigation follows connected edges on every authored tool map', () => {
@@ -143,7 +147,7 @@ void test('heat echo follows gradual movement and fires once without a repeating
   const m = new GameModel();
   m.campaign!.unlock('thermal');
   m.campaign!.state.pending = [];
-  m.nodes.thermal = ['TH-T1', 'TH-T2', 'TH-T3', 'TH-T4'];
+  m.nodes.thermal = ['TH-T1', 'TH-T2', 'TH-T3'];
   m.loot = [];
   const p = m.field.points.find((_, i) => m.field.values[i] > 0.9)!;
   m.press();
@@ -160,12 +164,12 @@ void test('heat echo follows gradual movement and fires once without a repeating
   assert.equal(m.echoAnchor, null);
 });
 
-void test('six authored radial trees have exactly 103 distinct upgrades and unobstructed edges', () => {
+void test('six authored radial trees have exactly 70 distinct upgrades and unobstructed edges', () => {
   assert.deepEqual(
     TOOL_ORDER.map((t) => TOOL_TREES[t].length),
-    [16, 17, 17, 17, 17, 19],
+    [11, 11, 12, 12, 11, 13],
   );
-  assert.equal(new Set(ALL_TOOL_NODES.map((n) => n.id)).size, 103);
+  assert.equal(new Set(ALL_TOOL_NODES.map((n) => n.id)).size, 70);
   for (const tool of TOOL_ORDER) {
     const list = TOOL_TREES[tool],
       points = [{ id: 'root', x: MAP.rootX, y: MAP.rootY }, ...list];
@@ -225,7 +229,7 @@ void test('authored purchases enforce tool ownership and prerequisites, persist 
       clock += 150;
       assert.equal(m.purchaseNode(n.id, clock), true, n.id);
     }
-  assert.equal(Object.values(m.nodes).flat().length, 103);
+  assert.equal(Object.values(m.nodes).flat().length, 70);
   const restored = new GameModel(m.serialize());
   assert.equal(restored.saveStatus, 'saved');
   assert.deepEqual(restored.nodes, m.nodes);
@@ -353,11 +357,11 @@ void test('real voxel damage responds to depth, center and weakened-ice techniqu
   assert.ok(
     toolEffects(['TH-P1', 'TH-P2', 'TH-S1', 'TH-S2', 'TH-T1', 'TH-T2'])
       .power ===
-      1.05 ** 2,
+      1.1 ** 2,
   );
   const m = new GameModel();
   assert.equal(m.selectBreakerBit('precision'), false);
-  m.nodes.breaker = ['PB-C1', 'PB-C2', 'PB-C3', 'PB-C4'];
+  m.nodes.breaker = ['PB-C1', 'PB-C2', 'PB-C3'];
   assert.equal(m.selectBreakerBit('precision'), true);
   assert.equal(m.breakerBit, 'precision');
   assert.equal(m.selectBreakerBit('wide'), true);
@@ -741,7 +745,8 @@ void test('every revision-one branch keeps numerical benefits and paid mechanics
         delete raw.treeCarry;
         raw.nodes[tool] = old.slice(0, count).map((n) => n.id);
         const before = oldEffects(raw.nodes[tool]);
-        const migrated = migrateTreeV1(raw.nodes),
+        const v1 = migrateTreeV1(raw.nodes),
+          migrated = migrateTreeV2(v1.nodes, v1.carry),
           after = carriedEffects(migrated.nodes[tool], migrated.carry[tool]);
         for (const k of [
           'power',
@@ -869,4 +874,64 @@ void test('purchase family has four bounded variants, a leading transient, short
     for (let n = 0; n < 30; n++)
       assert.deepEqual(confirmationSample(44100, kind, n % 4), samples[n % 4]);
   }
+});
+
+void test('revision-2 tiers fold into the compact map without losing any paid benefit, once', () => {
+  const higher = [
+    'power',
+    'center',
+    'depth',
+    'area',
+    'weak',
+    'visible',
+    'support',
+    'detach',
+    'fuel',
+    'afterheat',
+    'side',
+    'sideDepth',
+    'focusPower',
+    'sustainPower',
+    'thirdPower',
+    'resonance',
+    'charge',
+    'wideArea',
+  ] as const;
+  const lower = ['cycle', 'burn', 'steadiness', 'release'] as const;
+  for (const tool of TOOL_ORDER)
+    for (const branch of ['power', 'speed', 'control', 'technique'] as const) {
+      const old = V2_TREES[tool].filter((n) => n.branch === branch);
+      for (let count = 1; count <= old.length; count++) {
+        const m = new GameModel();
+        m.campaign!.state.tools = [...TOOL_ORDER];
+        const raw = JSON.parse(m.serialize());
+        raw.treeRevision = 2;
+        delete raw.treeCarry;
+        raw.nodes[tool] = old.slice(0, count).map((n) => n.id);
+        const before = v2Effects(raw.nodes[tool]);
+        const migrated = migrateTreeV2(raw.nodes),
+          after = carriedEffects(migrated.nodes[tool], migrated.carry[tool]);
+        const label = `${tool} ${branch} ${count}`;
+        for (const k of higher)
+          assert.ok(after[k] + 1e-9 >= before[k], `${label}: ${k}`);
+        for (const k of lower)
+          assert.ok(after[k] <= before[k] + 1e-9, `${label}: ${k}`);
+        for (const mechanic of before.mechanics)
+          assert.ok(after.mechanics.has(mechanic), `${label}: ${mechanic}`);
+        assert.ok(
+          migrated.nodes[tool].every((id) =>
+            TOOL_TREES[tool].some((n) => n.id === id),
+          ),
+          label,
+        );
+        const loaded = new GameModel(JSON.stringify(raw));
+        assert.equal(loaded.saveStatus, 'saved', label);
+        assert.deepEqual(loaded.nodes, migrated.nodes, label);
+        assert.equal(JSON.parse(loaded.serialize()).treeRevision, 3);
+        const twice = new GameModel(loaded.serialize());
+        assert.equal(twice.saveStatus, 'saved');
+        assert.deepEqual(twice.nodes, loaded.nodes);
+        assert.deepEqual(twice.treeCarry, loaded.treeCarry);
+      }
+    }
 });

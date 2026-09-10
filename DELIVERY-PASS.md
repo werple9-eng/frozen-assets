@@ -1,5 +1,7 @@
 # Frozen Assets — longer trees and delivery payoff
 
+> **Revision 3 — September 9, 2026.** The 103-node tiers described below are superseded. The six maps now hold **70 fittings with no repeated descriptions**: tiers are capped at two per subject, every second tier adds a second real effect rather than restating the first, numeric steps are 8–10% instead of 4–5%, and every mechanical milestone keeps its previous price. Saves from revisions 1 and 2 migrate through `legacy-tree-v2.ts` and `tree-migration.ts` without losing any paid benefit, and mechanics are addressed by name through `MECHANIC_NODE` so re-ranking can never break a lookup again. The pacing figures in this record predate that change and must be re-simulated.
+
 Implemented locally from brief `cc2569b7-19ce-40c3-8a61-1a0e9df24325`, September 8, 2026. This is the current implementation record; the earlier 60-node results in `UPGRADES-OVERHAUL.md` are historical.
 
 ## Progression and interaction

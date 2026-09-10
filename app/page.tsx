@@ -1,6 +1,9 @@
 'use client';
 import { DeliveryComplete } from '@/components/game/delivery-complete';
-import { ConditionCue, type ConditionCueData } from '@/components/game/condition-cue';
+import {
+  ConditionCue,
+  type ConditionCueData,
+} from '@/components/game/condition-cue';
 import { CustodyTag, type HandlingTag } from '@/components/game/custody-tag';
 import './campaign.css';
 import './motion.css';
@@ -13,6 +16,12 @@ import { IncomingCall } from '@/components/game/incoming-call';
 import { MenuHeader } from '@/components/game/menu-header';
 import { TutorialBoard } from '@/components/game/tutorial-board';
 import { TutorialDebug } from '@/components/game/tutorial-debug';
+import { MECHANIC_NODE } from '@/lib/game/tool-trees';
+import { MUG_LINES, nextMugLine } from '@/lib/game/mug';
+import {
+  AmbientThought,
+  type Thought,
+} from '@/components/game/ambient-thought';
 import { tutorialControl } from '@/lib/game/tutorial-qa';
 import { tutorialCanWork, tutorialMessage } from '@/lib/game/tutorial';
 import { SpringNumber, Presence, Milestone } from '@/components/game/motion';
@@ -82,6 +91,8 @@ export default function Home() {
     [testing, setTesting] = useState(false);
   const menuRef = useRef<Menu>(null),
     rewardId = useRef(0);
+  const [thought, setThought] = useState<Thought | null>(null);
+  const mugHistory = useRef<number[]>([]);
   const [treeView, setTreeView] = useState<ToolMapViews>({});
   const [requestedTool, setRequestedTool] = useState<ToolId | undefined>();
   const menuAction = useRef<(menu: Menu) => void>(() => {});
@@ -319,6 +330,14 @@ export default function Home() {
       };
       engine.onOpenPhone = phone;
       engine.onOpenFiles = files;
+      engine.filesOpenRef = menuRef;
+      engine.onMugClick = () => {
+        const index = nextMugLine(mugHistory.current);
+        mugHistory.current = [index, ...mugHistory.current].slice(0, 2);
+        engine.audio.init();
+        engine.audio.sound('mug', 1);
+        setThought({ id: Date.now(), text: MUG_LINES[index] });
+      };
       engine.onDialKey = (key) =>
         window.dispatchEvent(
           new CustomEvent('recovery:dial-key', { detail: key }),
@@ -393,6 +412,12 @@ export default function Home() {
           return;
         }
         if (m.phase === 'playing') {
+          if (e.key.toLowerCase() === 'm') {
+            e.preventDefault();
+            engine.room.tapMug();
+            engine.onMugClick();
+            return;
+          }
           if (e.key.toLowerCase() === 'f') {
             e.preventDefault();
             files();
@@ -1008,19 +1033,11 @@ export default function Home() {
           The bank froze your assets. <em>Literally.</em>
         </p>
       )}
+      <AmbientThought thought={thought} onDone={() => setThought(null)} />
       <output className="recovery-message" key={s.message}>
         {s.message}
       </output>
       <div className="control-rail">
-        {s.campaign && !teaching && (
-          <TactileButton
-            className="files-shortcut"
-            data-hud
-            onClick={() => openMenu('phone')}
-          >
-            Recovery Files <kbd>F</kbd>
-          </TactileButton>
-        )}
         {s.thermal ? (
           <div className="fuel-unit" data-hud>
             <div className="fuel-title">
@@ -1058,7 +1075,10 @@ export default function Home() {
             </TactileButton>
           </div>
         )}
-        <Presence show={!rotated && !teaching && !recoveryCondition.handlingTag} className="interaction-hint">
+        <Presence
+          show={!rotated && !teaching && !recoveryCondition.handlingTag}
+          className="interaction-hint"
+        >
           <strong>
             {s.thermal
               ? 'Hold on ice to melt.'
@@ -1076,12 +1096,13 @@ export default function Home() {
         </Presence>
         <div className="tool-controls" data-hud>
           {s.campaign?.selected === 'breaker' &&
-            s.nodes.breaker.includes('PB-C3') && (
+            s.nodes.breaker.includes(MECHANIC_NODE.precisionBit) && (
               <fieldset className="nozzle-switch" aria-label="Breaker bit">
                 {(['standard', 'precision', 'wide'] as const)
                   .filter(
                     (bit) =>
-                      bit !== 'wide' || s.nodes.breaker.includes('PB-C4'),
+                      bit !== 'wide' ||
+                      s.nodes.breaker.includes(MECHANIC_NODE.wideBit),
                   )
                   .map((bit) => (
                     <TactileButton
@@ -1164,9 +1185,14 @@ export default function Home() {
           getScene={() => scene.current}
         />
       )}
-      {!menu && !teaching && !s.liveCall && !s.phone.ringing && !s.settlement && recoveryCondition.handlingTag && (
-        <CustodyTag tag={recoveryCondition.handlingTag} />
-      )}
+      {!menu &&
+        !teaching &&
+        !s.liveCall &&
+        !s.phone.ringing &&
+        !s.settlement &&
+        recoveryCondition.handlingTag && (
+          <CustodyTag tag={recoveryCondition.handlingTag} />
+        )}
       {rewards.map((r) => (
         <div
           key={r.id}
