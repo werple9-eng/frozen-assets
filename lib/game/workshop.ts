@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Spring } from './motion';
+import { prop } from './room-layout';
 import { sharedResource, SceneResources } from './scene-resources';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
@@ -513,7 +514,9 @@ export class Workshop {
     this.group.position.y = -0.5;
     if (unread > this.lastUnread) this.buzzUntil = time + 0.45;
     this.lastUnread = unread;
-    this.phone.position.set(-10.6 * span, 3.375, -8.8 * span);
+    const phone = prop('phone'),
+      files = prop('recovery-files');
+    this.phone.position.set(phone.x, (phone.y ?? 0) + 0.225, phone.z);
     if (this.secondRing >= 0) {
       this.secondRing -= dt;
       if (this.secondRing < 0 && ringing) this.phoneBounce.kick(1.1);
@@ -524,7 +527,7 @@ export class Workshop {
       hover = this.phoneHover.step(dt, reduced);
     this.handsetMaterial.emissiveIntensity = hover * 1.5;
     this.phone.position.y += reduced ? 0 : bounce + hover;
-    this.files.position.set(-9.6 * span, 0, 8.2 * span);
+    this.files.position.set(files.x, 0, files.z);
     this.filesHover.target = this.filesHovered ? 1 : 0;
     this.filesLift.target = filesOpen ? 1 : 0;
     const fileHover = this.filesHover.step(dt, reduced),
@@ -634,16 +637,29 @@ export class Workshop {
         this.display.add(g);
       });
       if (chapter >= 3) {
-        this.rack.add(box(2, 1.4, 2, black, -9 * span, 0.2, -5 * span));
-        this.rack.add(box(1.7, 0.12, 1.7, grip, -9 * span, 0.96, -5 * span));
+        const spot = prop('service-case');
+        this.rack.add(box(2, 1.4, 2, black, spot.x, 0.7, spot.z));
+        this.rack.add(box(1.7, 0.12, 1.7, grip, spot.x, 1.46, spot.z));
       }
       if (chapter >= 4) {
-        this.rack.add(box(0.15, 3.8, 0.15, metal, -7 * span, 1.3, -6 * span));
-        this.rack.add(box(2.2, 0.14, 0.4, lamp, -7 * span, 3.1, -6 * span));
-        this.rack.add(box(2.3, 2.5, 2, black, 9 * span, 0.4, -5 * span));
+        const light = prop('inspection-light'),
+          compressor = prop('compressor');
+        this.rack.add(box(0.15, 3.2, 0.15, metal, light.x, 1.6, light.z));
+        this.rack.add(box(2.2, 0.14, 0.4, lamp, light.x, 3.1, light.z));
+        this.rack.add(
+          box(2.3, 2.5, 2, black, compressor.x, 1.25, compressor.z),
+        );
         for (let i = 0; i < 6; i++)
           this.rack.add(
-            box(1.8, 0.07, 0.08, metal, 9 * span, 0.1 + i * 0.2, -3.96 * span),
+            box(
+              1.8,
+              0.07,
+              0.08,
+              metal,
+              compressor.x,
+              0.4 + i * 0.2,
+              compressor.z + 1.04,
+            ),
           );
       }
       this.rack.children.forEach((o) => {

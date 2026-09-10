@@ -10,6 +10,14 @@ import { TUNE, type Loot, type Vec3 } from './tuning';
 import { Workshop } from './workshop';
 import { WorkshopAir } from './atmosphere';
 import { WorkshopRoom } from './room';
+import {
+  graphicsBudget,
+  graphicsPixelRatio,
+  graphicsQuality,
+  type GraphicsQuality,
+} from './graphics';
+import { WORKBENCH_PROPS } from './room-layout';
+import { workshopFrame } from './workshop-framing';
 import { Spring, TOOL_MOTION } from './motion';
 import { ToolFollow } from './tool-follow';
 import { SceneResources } from './scene-resources';
@@ -57,6 +65,7 @@ export type SceneModel = {
     rotationSensitivity: number;
     reducedMotion: boolean;
     gameplayZoom?: number;
+    graphics?: GraphicsQuality;
   };
   inTutorial?: boolean;
   tutorial?: { step: number; stage: string; block: number; mode?: string };
@@ -84,6 +93,8 @@ export class GameScene {
     tool?: ToolId;
   } | null = null;
   renderer: THREE.WebGLRenderer;
+  keyLight = new THREE.DirectionalLight(0xeaf2f5, 2.4);
+  graphicsSignature = '';
   scene = new THREE.Scene();
   assembly = new THREE.Group();
   contents = new THREE.Group();
@@ -197,7 +208,9 @@ export class GameScene {
       alpha: true,
       powerPreference: 'high-performance',
     });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.65));
+    this.renderer.setPixelRatio(
+      graphicsPixelRatio(model.settings?.graphics, devicePixelRatio),
+    );
     this.renderer.setClearColor(0, 0);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.VSMShadowMap;
@@ -216,7 +229,7 @@ export class GameScene {
     this.assembly.position.y = 0.65;
     this.scene.add(this.assembly);
     this.scene.add(new THREE.HemisphereLight(0xc4d8df, 0x3a3f3b, 1.55));
-    const key = new THREE.DirectionalLight(0xeaf2f5, 2.4);
+    const key = this.keyLight;
     key.position.set(-4, 22, 10);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
@@ -1204,6 +1217,34 @@ export class GameScene {
     this.camera.updateMatrixWorld(true);
     this.fitCamera(1);
   }
+  applyGraphics() {
+    const quality = graphicsQuality(this.model.settings?.graphics);
+    const ratio = graphicsPixelRatio(quality, devicePixelRatio);
+    const signature = `${quality}:${ratio}`;
+    if (this.graphicsSignature === signature) return;
+    this.graphicsSignature = signature;
+    const budget = graphicsBudget(quality);
+    this.renderer.setPixelRatio(ratio);
+    const shadow = this.keyLight.shadow;
+    shadow.map?.dispose();
+    shadow.mapPass?.dispose();
+    shadow.map = null;
+    shadow.mapPass = null;
+    shadow.mapSize.set(
+      Math.max(1, budget.shadowSize),
+      Math.max(1, budget.shadowSize),
+    );
+    shadow.blurSamples = budget.shadowBlur;
+    this.keyLight.castShadow = budget.shadowSize > 0;
+    this.renderer.shadowMap.enabled = budget.shadowSize > 0;
+    this.scene.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      for (const material of Array.isArray(o.material)
+        ? o.material
+        : [o.material])
+        material.needsUpdate = true;
+    });
+  }
   fitCamera(dt: number) {
     const w = this.host.clientWidth,
       h = this.host.clientHeight,
@@ -1222,8 +1263,7 @@ export class GameScene {
       minY = Math.min(minY, p.y);
       maxY = Math.max(maxY, p.y);
     };
-    // Fit the delivered solid, not the distant desk props. Cache its original
-    // bounds so chipping never causes a distracting zoom into the leftovers.
+    // Cache the delivered solid so chipping never zooms into the leftovers.
     const bounds = this.ice.userData.deliveryBounds as THREE.Box3 | undefined;
     const empty = this.model.inTutorial && this.model.tutorial?.block === 0;
     if (bounds && !empty) {
@@ -1234,60 +1274,66 @@ export class GameScene {
       sample(-5.8, 0, -4.7);
       sample(5.8, 2, 4.1);
     }
-    // A ringing landline is part of the shot until it is picked up.
-    if (this.model.phoneRinging && !this.model.phoneOffHook) {
-      const p = this.workshop.handset.getWorldPosition(new THREE.Vector3());
-      sample(p.x - 1.7, p.y - 0.5, p.z - 1.3);
-      sample(p.x + 1.7, p.y + 1.0, p.z + 1.3);
-    }
-    const chapter = this.model.chapter ?? 1;
-    const widthTarget = empty
-      ? 0.85
-      : this.model.inTutorial
-        ? 0.6
-        : chapter <= 2
-          ? 0.58
-          : chapter <= 4
-            ? 0.62
-            : 0.68;
-    const heightTarget = this.model.inTutorial
-      ? 0.5
-      : chapter >= 4
-        ? 0.62
-        : 0.56;
-    const span = Math.max(
-      (maxX - minX) / (2 * a * widthTarget),
-      (maxY - minY) / (2 * heightTarget),
+    const ice = { minX, maxX, minY, maxY };
+    const props = this.projectWorkbench();
+    const { span, x, y, minSpan } = workshopFrame(
+      ice,
+      props,
+      a,
+      this.model.settings?.gameplayZoom ?? 0.5,
     );
-    const x = (minX + maxX) / 2;
-    // Keep the upper work area steady when a call opens beneath it.
-    const y = (minY + maxY) / 2 + span * (this.model.inTutorial ? -0.24 : -0.2);
     const blend = 1 - Math.exp(-4.5 * dt);
     this.framing.span += (span - this.framing.span) * blend;
     this.framing.x += (x - this.framing.x) * blend;
     this.framing.y += (y - this.framing.y) * blend;
-    // Orthographic distance never changes: zoom cannot move the camera into a
-    // tool or block. A projected-size guard keeps the complete solid usable.
-    const safeRatio = Math.min(
-      (this.framing.span * 2 * 0.94) / Math.max(0.01, maxY - minY),
-      (this.framing.span * 2 * a * 0.95) / Math.max(0.01, maxX - minX),
-    );
-    this.cameraZoom.target = Math.min(
-      safeRatio,
-      2 ** (((this.model.settings?.gameplayZoom ?? 0.5) - 0.5) * 0.75),
-    );
-    this.cameraZoom.step(dt, this.model.settings?.reducedMotion);
+    // Protect the whole cluster during rotation and the camera's spring, too.
     const introSpan =
-      (this.framing.span / Math.max(0.65, this.cameraZoom.value)) *
-      (1 + this.entry.value * 0.13);
+      Math.max(
+        this.framing.span,
+        minSpan + Math.abs(y - this.framing.y),
+        minSpan + Math.abs(x - this.framing.x) / a,
+      ) *
+      (1 + Math.max(0, this.entry.value) * 0.13);
     this.camera.left = this.framing.x - introSpan * a;
     this.camera.right = this.framing.x + introSpan * a;
     this.camera.top = this.framing.y + introSpan;
     this.camera.bottom = this.framing.y - introSpan;
     this.camera.updateProjectionMatrix();
   }
+  projectWorkbench() {
+    const bounds = {
+      minX: Infinity,
+      maxX: -Infinity,
+      minY: Infinity,
+      maxY: -Infinity,
+    };
+    const scale = this.workshop.group.scale.x;
+    for (const prop of WORKBENCH_PROPS)
+      for (const x of [prop.x - prop.w / 2, prop.x + prop.w / 2])
+        for (const z of [prop.z - prop.d / 2, prop.z + prop.d / 2])
+          for (const y of [prop.y ?? 0, (prop.y ?? 0) + prop.height]) {
+            // World-space props must not inherit the tray's rotation a second time.
+            const p = this.fitPoint
+              .set(x * scale, y * scale - 0.5, z * scale)
+              .applyMatrix4(this.camera.matrixWorldInverse);
+            bounds.minX = Math.min(bounds.minX, p.x);
+            bounds.maxX = Math.max(bounds.maxX, p.x);
+            bounds.minY = Math.min(bounds.minY, p.y);
+            bounds.maxY = Math.max(bounds.maxY, p.y);
+          }
+    return bounds;
+  }
   burst(p: Vec3, count: number, fragment = false) {
     if (this.model.reducedParticles && !fragment) return;
+    const budget = graphicsBudget(
+      this.model.settings?.graphics,
+      this.model.reducedParticles,
+    );
+    if (count > 1)
+      count = Math.max(
+        1,
+        Math.ceil((count * budget.particles) / TUNE.particleCap),
+      );
     const epsilon = 0.06,
       density = this.model.field.density.bind(this.model.field);
     const normal = new THREE.Vector3(
@@ -1300,7 +1346,7 @@ export class GameScene {
     ).normalize();
     for (
       let i = 0;
-      i < count && this.particles.length < TUNE.particleCap;
+      i < count && this.particles.length < budget.particles;
       i++
     ) {
       const reused = this.particlePool.pop();
@@ -1387,6 +1433,7 @@ export class GameScene {
       rawDt = this.last ? (now - this.last) / 1000 : 1 / 60;
     this.last = now;
     const dt = Math.min(rawDt, 0.033);
+    this.applyGraphics();
     for (let i = this.phaseShells.length - 1; i >= 0; i--) {
       const shell = this.phaseShells[i];
       shell.age += dt;
@@ -1476,6 +1523,7 @@ export class GameScene {
       now / 1000,
       rawDt,
       recoil,
+      this.camera.position.y,
     );
     this.air.update(
       now / 1000,
@@ -1484,6 +1532,9 @@ export class GameScene {
       rawDt,
       this.room.lampWorld(),
       this.room.lampTarget(),
+      graphicsQuality(this.model.settings?.graphics),
+      this.renderer.domElement.height,
+      this.model.loot.some((loot) => loot.state === 'embedded'),
     );
     this.audio.room(
       now / 1000,
@@ -2207,6 +2258,13 @@ export class GameScene {
       },
       height: this.host.clientHeight,
       pixelRatio: this.renderer.getPixelRatio(),
+      graphics: {
+        quality: graphicsQuality(this.model.settings?.graphics),
+        shadows: this.renderer.shadowMap.enabled,
+        shadowSize: this.keyLight.shadow.mapSize.x,
+        dust: this.air.geometry.drawRange.count,
+        mist: this.air.mist.geometry.drawRange.count,
+      },
     };
   }
   dispose() {

@@ -1,4 +1,5 @@
 import { overhaulUIAudit } from './overhaul-qa';
+import { workshopGraphicsAudit } from './workshop-qa';
 import { renderedReleaseStress } from './release-qa';
 import {
   createMajorQA,
@@ -257,6 +258,12 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
       empty,
       () => releaseStress,
       true,
+    );
+    add(
+      'test_workshop_graphics',
+      'Isolated visible QA: render all four graphics presets at three zoom levels twice; check actual mug, phone and files bounds, room scale, comfort settings and bounded GPU allocations. Restores preferences afterward.',
+      empty,
+      () => workshopGraphicsAudit(s),
     );
     add<MajorDeliveryFixture>(
       'practice_major_delivery',

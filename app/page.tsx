@@ -18,6 +18,7 @@ import { TutorialBoard } from '@/components/game/tutorial-board';
 import { TutorialDebug } from '@/components/game/tutorial-debug';
 import { MECHANIC_NODE } from '@/lib/game/tool-trees';
 import { MUG_LINES, nextMugLine } from '@/lib/game/mug';
+import { GRAPHICS, GRAPHICS_LEVELS } from '@/lib/game/graphics';
 import {
   AmbientThought,
   type Thought,
@@ -1441,6 +1442,41 @@ export default function Home() {
               subtitle="Make this workshop yours."
             />
             <div className="settings-grid">
+              <div className="setting-row graphics-setting">
+                <label id="graphics-label">
+                  Graphics <span>{GRAPHICS[s.settings.graphics].label}</span>
+                </label>
+                <Slider
+                  aria-labelledby="graphics-label"
+                  aria-describedby="graphics-description"
+                  min={0}
+                  max={3}
+                  step={1}
+                  value={[GRAPHICS_LEVELS.indexOf(s.settings.graphics)]}
+                  aria-valuetext={GRAPHICS[s.settings.graphics].label}
+                  onValueChange={(value) =>
+                    setting(
+                      'graphics',
+                      GRAPHICS_LEVELS[Array.isArray(value) ? value[0] : value],
+                    )
+                  }
+                />
+                <div className="graphics-stops">
+                  {GRAPHICS_LEVELS.map((quality) => (
+                    <button
+                      key={quality}
+                      type="button"
+                      aria-pressed={s.settings.graphics === quality}
+                      onClick={() => setting('graphics', quality)}
+                    >
+                      {GRAPHICS[quality].label}
+                    </button>
+                  ))}
+                </div>
+                <p id="graphics-description">
+                  {GRAPHICS[s.settings.graphics].description}
+                </p>
+              </div>
               {(
                 [
                   'master',

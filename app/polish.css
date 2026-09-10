@@ -2126,3 +2126,41 @@
 .reduced-motion .ambient-thought span {
   animation-duration: 1ms;
 }
+/* A discrete, live graphics slider; the labels are also generous click targets. */
+.settings-screen .settings-grid > .graphics-setting {
+  grid-column: 1 / -1 !important;
+  padding: 12px 18px 14px;
+  border: 1px solid #a59f7140;
+  background: linear-gradient(110deg, #d6c98c0c, #a9d9d506);
+}
+.graphics-stops {
+  display: flex;
+  justify-content: space-between;
+  margin: 4px -8px 0;
+}
+.graphics-stops button {
+  color: #a5b0a4;
+  font: inherit;
+  font-size: 15px;
+  min-height: 36px;
+  padding: 4px 8px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.graphics-stops button[aria-pressed='true'] {
+  color: #eedba0;
+  border-color: #cfb966;
+}
+.graphics-stops button:hover {
+  color: #fff0c3;
+}
+.graphics-stops button:focus-visible {
+  outline: 2px solid #cfb966;
+  outline-offset: 2px;
+}
+.graphics-setting p {
+  color: #aebcb3;
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 7px 0 0;
+}

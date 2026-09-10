@@ -33,6 +33,7 @@ export class WorkshopRoom {
   mugHover = new Spring(0, 240, 24);
   lampShade = new THREE.Group();
   lampLight: THREE.PointLight;
+  overheadLight: THREE.PointLight;
   lampRecoil = new Spring(0, 180, 18);
   board = new THREE.Group();
   cards: THREE.Mesh[] = [];
@@ -44,6 +45,12 @@ export class WorkshopRoom {
   signature = '';
   private readonly lampAnchor = new THREE.Vector3();
   private readonly lampAim = new THREE.Vector3();
+  private paperCorners: { page: THREE.Mesh; corner: number; base: number }[] =
+    [];
+  private coffeeSurface?: THREE.Mesh;
+  private coffeeRipples: THREE.Mesh[] = [];
+  private coffeeAge = 10;
+  private ceilingParts: THREE.Object3D[] = [];
 
   constructor() {
     const g = this.group;
@@ -120,6 +127,7 @@ export class WorkshopRoom {
     // Base strip where wall meets floor.
     box(44, 0.7, 0.12, dark, 0, ROOM.floor + 0.35, ROOM.back + 0.06, 0);
     // Drop ceiling: 2×4 tiles in a dark grid, one water-stained, and a troffer.
+    const ceilingStart = g.children.length;
     box(44, 0.3, 26, ceilingPaint, 0, ROOM.ceiling + 0.15, -1.6, 0);
     const rows = [-9.1, 1.9],
       cols = [-16.5, -11, -5.5, 0, 5.5, 11, 16.5];
@@ -165,7 +173,9 @@ export class WorkshopRoom {
       0,
     );
     lens.receiveShadow = false;
+    this.ceilingParts = g.children.slice(ceilingStart);
     const overhead = new THREE.PointLight(0xd9ebf1, 34, 46, 1.15);
+    this.overheadLight = overhead;
     overhead.position.set(0, ROOM.ceiling - 1.2, -3.6);
     g.add(overhead);
     // Door, back-right: closed, institutional, with a service plate.
@@ -316,24 +326,27 @@ export class WorkshopRoom {
       0.04,
       true,
     );
-    for (const x of [shelf.x - shelf.w / 2 + 0.2, shelf.x + shelf.w / 2 - 0.2])
+    // Cantilevered from the outside edge: no support leg enters the tray sweep.
+    for (const id of ['phone-post-back', 'phone-post-front']) {
+      const post = prop(id);
       box(
-        0.25,
+        post.w,
         PHONE_SHELF_TOP - 0.25,
-        shelf.d - 0.5,
+        post.d,
         steel,
-        x,
+        post.x,
         (PHONE_SHELF_TOP - 0.25) / 2,
-        shelf.z,
+        post.z,
         0.03,
       );
+    }
     const pad = prop('notepad');
     box(pad.w, 0.18, pad.d, paper, pad.x, PHONE_SHELF_TOP + 0.09, pad.z, 0.01);
     const note = this.plate(['TONY — 7'], 1.2, 0.5, '#2a3a30', '#c9c39e', [26]);
     note.rotation.x = -Math.PI / 2;
     note.position.set(pad.x, PHONE_SHELF_TOP + 0.185, pad.z - 0.2);
     g.add(note);
-    this.pen(-8.6, PHONE_SHELF_TOP + 0.06, -7.7, 1.1, dark);
+    this.pen(pad.x, PHONE_SHELF_TOP + 0.24, pad.z, 1.1, dark);
     // Clamp work lamp, rear-right, reaching over the tray above the ice envelope.
     const base = prop('lamp-base');
     box(base.w, 0.5, base.d, lampMetal, base.x, 0.25, base.z, 0.05, true);
@@ -394,6 +407,7 @@ export class WorkshopRoom {
     // Mug, front-right, with cold coffee and a faint ring beside it.
     const mugSpot = prop('mug');
     this.mug.position.set(mugSpot.x, 0, mugSpot.z);
+    this.mug.scale.setScalar(1.35);
     const body = new THREE.Mesh(
       new THREE.CylinderGeometry(0.5, 0.46, 1.05, 24, 1, true),
       ceramic,
@@ -416,6 +430,23 @@ export class WorkshopRoom {
     drink.rotation.x = -Math.PI / 2;
     drink.position.y = 0.42;
     this.mug.add(drink);
+    this.coffeeSurface = drink;
+    for (let i = 0; i < 2; i++) {
+      const ripple = new THREE.Mesh(
+        new THREE.RingGeometry(0.28, 0.3, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xbbaa84,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        }),
+      );
+      ripple.rotation.x = -Math.PI / 2;
+      ripple.position.y = 0.424 + i * 0.002;
+      ripple.visible = false;
+      this.mug.add(ripple);
+      this.coffeeRipples.push(ripple);
+    }
     const handle = new THREE.Mesh(
       new THREE.TorusGeometry(0.3, 0.075, 8, 18, Math.PI),
       ceramic,
@@ -549,6 +580,7 @@ export class WorkshopRoom {
     g.updateMatrixWorld(true);
     g.traverse((o) => {
       if (
+        o !== g &&
         o !== this.mug &&
         o !== this.lampShade &&
         o !== this.board &&
@@ -693,6 +725,12 @@ export class WorkshopRoom {
       geometry.computeVertexNormals();
     }
     const page = new THREE.Mesh(geometry, m);
+    if (curl) {
+      const p = geometry.getAttribute('position');
+      for (let i = 0; i < p.count; i++)
+        if (p.getZ(i) > 0)
+          this.paperCorners.push({ page, corner: i, base: p.getZ(i) });
+    }
     page.rotation.set(-Math.PI / 2, 0, rot);
     page.position.set(x, y, z);
     page.receiveShadow = true;
@@ -718,6 +756,7 @@ export class WorkshopRoom {
   }
   tapMug() {
     this.mugTilt.kick(1.4);
+    this.coffeeAge = 0;
   }
   react(recoil: number) {
     this.lampRecoil.kick(recoil * 0.4);
@@ -733,11 +772,17 @@ export class WorkshopRoom {
     chapter: number,
     tutorialComplete: boolean,
     reduced: boolean,
-    _time: number,
+    time: number,
     dt: number,
     recoil = 0,
+    cameraY = 14.7,
   ) {
     this.group.scale.setScalar(scale);
+    // A dollhouse cutaway when the fixed camera is above a small workshop.
+    // Otherwise the ceiling's outside face masks the lamp and upper work area.
+    const beneathCeiling =
+      cameraY < ROOM.ceiling * scale + this.group.position.y - 0.1;
+    for (const part of this.ceilingParts) part.visible = beneathCeiling;
     this.mugHover.target = this.mugHovered ? 1 : 0;
     const hover = this.mugHover.step(dt, reduced),
       tilt = this.mugTilt.step(dt, reduced);
@@ -746,6 +791,48 @@ export class WorkshopRoom {
     if (recoil) this.react(recoil);
     const shake = this.lampRecoil.step(dt, reduced);
     this.lampShade.rotation.z = reduced ? 0 : shake * 0.004;
+    // Lights are authored in desk-local units as well. Compensate attenuation
+    // when the workshop scales, so the tutorial isn't washed out by tiny distances.
+    this.overheadLight.intensity = 34 * scale ** this.overheadLight.decay;
+    this.overheadLight.distance = 46 * scale;
+    this.lampLight.distance = 24 * scale;
+    this.lampLight.intensity =
+      38 *
+      scale ** this.lampLight.decay *
+      (reduced
+        ? 1
+        : 1 + Math.sin(time * 0.61) * 0.018 + Math.sin(time * 1.13) * 0.007);
+    this.coffeeAge += Math.min(0.05, dt);
+    this.coffeeRipples.forEach((ripple, i) => {
+      const age = this.coffeeAge - i * 0.22;
+      ripple.visible = !reduced && age > 0 && age < 1.3;
+      if (!ripple.visible) {
+        ripple.scale.setScalar(0.001);
+        return;
+      }
+      ripple.scale.setScalar(0.2 + Math.max(0, age) * 0.85);
+      (ripple.material as THREE.MeshBasicMaterial).opacity = Math.max(
+        0,
+        (1 - age / 1.3) * 0.2,
+      );
+    });
+    if (this.coffeeSurface)
+      this.coffeeSurface.rotation.x =
+        -Math.PI / 2 +
+        (reduced
+          ? 0
+          : Math.sin(this.coffeeAge * 18) *
+            Math.exp(-this.coffeeAge * 4) *
+            0.018);
+    for (const [i, { page, corner, base }] of this.paperCorners.entries()) {
+      const p = page.geometry.getAttribute('position');
+      p.setZ(
+        corner,
+        base +
+          (reduced ? 0 : (0.5 + Math.sin(time * 1.4 + i * 2.1) * 0.5) * 0.055),
+      );
+      p.needsUpdate = true;
+    }
     const key = `${chapter}:${tutorialComplete}`;
     if (key !== this.signature) {
       this.signature = key;

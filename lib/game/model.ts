@@ -1,3 +1,4 @@
+import { graphicsQuality } from './graphics';
 import {
   carriedEffects,
   migrateTreeV1,
@@ -123,6 +124,7 @@ export const UPGRADES: Record<
   },
 };
 export type Settings = {
+  graphics: import('./graphics').GraphicsQuality;
   master: number;
   effects: number;
   muted: boolean;
@@ -136,6 +138,7 @@ export type Settings = {
   gameplayZoom: number;
 };
 const DEFAULT_SETTINGS: Settings = {
+  graphics: 'high',
   master: 0.65,
   effects: 0.7,
   muted: false,
@@ -2549,6 +2552,7 @@ export class GameModel {
         this.settlementTime = 0;
       }
       if (s.settings) {
+        this.settings.graphics = graphicsQuality(s.settings.graphics);
         for (const k of [
           'master',
           'effects',
