@@ -1,5 +1,8 @@
 import { AUTHORED_DIALOGUE } from './authored-dialogue';
 import { TOOL_PRICES } from './tool-trees';
+import { MAJOR_BLOCKS, recoveryContract } from './major-campaign';
+import { LEGACY_V2_BLOCKS } from './legacy-layouts';
+import { MAJOR_RETIRED_STORY_IDS, MAJOR_STORY_EVENTS } from './major-story';
 export const CAMPAIGN_REVISION = 1;
 export const CHAPTERS = [
   { id: 1, name: 'Small Change', start: 0, end: 4 },
@@ -186,6 +189,13 @@ export type BlockSpec = {
   phases: number;
   layers?: Profile[];
   hint: string;
+  ice?: import('./major-campaign').DeliveryIceSpec;
+  baseNet?: number;
+  baseGross?: number;
+  targetActiveSeconds?: { min: number; max: number };
+  structure?: string;
+  cargoLabel?: string;
+  contract?: import('./major-campaign').RecoveryContract;
 };
 const blocks: [
   string,
@@ -269,25 +279,12 @@ export const LEGACY_BLOCKS: BlockSpec[] = blocks.map(
     hint: hints[profile],
   }),
 );
-export const BLOCKS: BlockSpec[] = LEGACY_BLOCKS.map((b, i) => {
-  if (i === 31) return b;
-  const layers: Profile[] =
-    i < 4
-      ? [b.profile, i % 2 ? 'slab' : 'parcel', i > 1 ? 'tower' : 'slab']
-      : i < 10
-        ? [b.profile, 'slab', i % 2 ? 'seam' : 'tower']
-        : i < 18
-          ? [b.profile, 'wings', i % 2 ? 'archive' : 'seam']
-          : i < 25
-            ? [b.profile, 'archive', i % 2 ? 'tower' : 'wings']
-            : [b.profile, 'seam', i % 2 ? 'archive' : 'slab'];
-  if (i >= 24) layers.pop();
-  return { ...b, layers, phases: layers.length };
-});
-export function blockSpec(index: number, layoutVersion = 2): BlockSpec {
+export const BLOCKS: BlockSpec[] = MAJOR_BLOCKS;
+export function blockSpec(index: number, layoutVersion = 3): BlockSpec {
   if (index < 32)
-    return (layoutVersion === 1 ? LEGACY_BLOCKS : BLOCKS)[Math.max(0, index)];
-  const base = BLOCKS[18 + ((index - 32) % 13)];
+    return (layoutVersion === 1 ? LEGACY_BLOCKS : layoutVersion === 2 ? LEGACY_V2_BLOCKS : BLOCKS)[Math.max(0, index)];
+  if (layoutVersion >= 3) return recoveryContract(index);
+  const base = (layoutVersion === 1 ? LEGACY_BLOCKS : LEGACY_V2_BLOCKS)[18 + ((index - 32) % 13)];
   return {
     ...base,
     id: `contract-${index - 31}`,
@@ -320,7 +317,7 @@ export type Trigger =
   | 'POSTGAME_START';
 export type StoryMessage = {
   key: string;
-  speaker: 'tony' | 'bank' | 'system';
+  speaker: 'tony' | 'bank' | 'mercer' | 'system';
   text: string;
 };
 export type StoryEvent = {
@@ -334,6 +331,11 @@ export type StoryEvent = {
   required: boolean;
   messages: StoryMessage[];
   effect?: 'commission8' | 'ending';
+  /** These prerequisites are resolved when the player finishes the call. */
+  requiresRead?: string[];
+  /** Zero-based physical phase. Used by authored Vault calls. */
+  atPhase?: number;
+  readEffect?: { commission?: 0 | 8 | 12; flag?: string };
   once: true;
   retired?: boolean;
 };
@@ -730,6 +732,10 @@ const authoredEvents: StoryEvent[] = [
     effect: 'ending',
   }),
 ];
+const majorStoryById = new Map(
+  MAJOR_STORY_EVENTS.map((event) => [event.id, event]),
+);
+const retiredStoryIds = new Set<string>(MAJOR_RETIRED_STORY_IDS);
 export const STORY: StoryEvent[] = [
   ...(
     [
@@ -769,8 +775,17 @@ export const STORY: StoryEvent[] = [
       { at: tool.block, priority: 60 },
     );
   }),
-  ...authoredEvents,
+  ...authoredEvents.map(
+    (event) =>
+      majorStoryById.get(event.id) ??
+      (retiredStoryIds.has(event.id) ? { ...event, retired: true } : event),
+  ),
+  ...MAJOR_STORY_EVENTS.filter(
+    (event) => !authoredEvents.some((old) => old.id === event.id),
+  ),
   ...LEGACY_STORY.filter(
-    (old) => !authoredEvents.some((e) => e.id === old.id),
+    (old) =>
+      !authoredEvents.some((e) => e.id === old.id) &&
+      !majorStoryById.has(old.id),
   ).map((e) => ({ ...e, retired: true })),
 ];

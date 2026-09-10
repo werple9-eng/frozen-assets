@@ -44,7 +44,7 @@ export async function tutorialUIAudit(s: GameScene) {
     forceTutorialStep(m, 7);
     key('u');
     await wait(900);
-    const node = document.querySelector<HTMLButtonElement>('.continuous-node');
+    const node = document.querySelector<HTMLButtonElement>('[data-skill="HC-S1"]');
     result.firstUpgradeFocused = document.activeElement === node;
     node?.click();
     await wait(1000);

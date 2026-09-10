@@ -15,7 +15,7 @@ const { GameModel } = require('../.test-build/lib/game/model.js'),
     NODE_BUDGET,
   } = require('../.test-build/lib/game/tool-trees.js');
 const branches = ['power', 'speed', 'control', 'technique'],
-  policies = ['power', 'speed', 'technique'],
+  policies = ['power', 'speed', 'control', 'technique'],
   results = [];
 for (const tool of TOOL_ORDER) {
   const paths = branches.map((b) =>
@@ -43,10 +43,29 @@ for (const tool of TOOL_ORDER) {
   let choices, spent;
   for (const cost of costs) {
     const matches = combinations.filter((c) => c.cost === cost),
-      picks = policies.map(
-        (p) => [...matches].sort((a, b) => score(b, p) - score(a, p))[0],
+      picks = [];
+    // Equal-price ties can otherwise choose the same loadout for two priorities.
+    // Keep each policy's maximum preferred-branch investment; use distinct ties.
+    for (const p of policies) {
+      const ranked = [...matches].sort((a, b) => score(b, p) - score(a, p));
+      const maxPreferred = Math.max(
+        ...ranked.map((c) => c.nodes.filter((n) => n.branch === p).length),
       );
-    if (new Set(picks.map((c) => c.nodes.map((n) => n.id).join())).size === 3) {
+      const choice = ranked.find(
+        (c) =>
+          c.nodes.filter((n) => n.branch === p).length === maxPreferred &&
+          !picks.some(
+            (q) =>
+              q.nodes.map((n) => n.id).join() ===
+              c.nodes.map((n) => n.id).join(),
+          ),
+      );
+      if (choice) picks.push(choice);
+    }
+    if (
+      new Set(picks.map((c) => c.nodes.map((n) => n.id).join())).size ===
+      policies.length
+    ) {
       choices = picks;
       spent = cost;
       break;
@@ -68,6 +87,8 @@ for (const tool of TOOL_ORDER) {
       m.loot = campaignLoot(block, phase);
       m.field.carveLoot(m.loot);
       m.nodes[tool] = choices[pi].nodes.map((n) => n.id);
+      if (tool === 'breaker' && m.hasNode('PB-C3'))
+        m.selectBreakerBit('precision');
       m.fuel = m.capacity;
       const ray = new THREE.Raycaster(),
         mesh = new THREE.Mesh(
@@ -86,8 +107,10 @@ for (const tool of TOOL_ORDER) {
         c.state.pending = [];
         c.state.call = undefined;
         if (m.thermal && m.fuel < 0.01) m.refill();
-        if (m.thermal && m.hasFan)
-          m.selectMode(m.field.profile.shape === 'slab' ? 'wide' : 'precision');
+        const heatMode =
+          m.field.profile.shape === 'slab' ? 'wide' : 'precision';
+        if (m.thermal && m.hasFan && m.mode !== heatMode)
+          m.selectMode(heatMode);
         if (refresh <= 0) {
           refresh = 0.3;
           const t = m.loot.find(

@@ -1,14 +1,17 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { IceField, surface } from './ice';
+import { IceField } from './ice';
+import { ChunkedIceMesh } from './ice-renderer';
 import { meshContactSamples } from './mesh-contact';
 import { TrayRotation } from './rotation';
 import { GameAudio } from './audio';
+import { incomingCallPresentation, type IncomingCall } from './phone-call';
 import { TUNE, type Loot, type Vec3 } from './tuning';
 import { Workshop } from './workshop';
 import { WorkshopAir } from './atmosphere';
 import { Spring, TOOL_MOTION } from './motion';
 import { ToolFollow } from './tool-follow';
+import { SceneResources } from './scene-resources';
 import { strikePose, type StrikeCycle } from './strike';
 import type { ToolId, StoryObjectId } from './campaign-content';
 export type SceneModel = {
@@ -30,6 +33,7 @@ export type SceneModel = {
   strikeSerial?: number;
   strike?: StrikeCycle;
   chargeTime?: number;
+  fittings?: { steadiness: number };
   campaignScale?: number;
   chapter?: number;
   unread?: number;
@@ -39,7 +43,14 @@ export type SceneModel = {
   liveCall?: unknown;
   storyObjects?: StoryObjectId[];
   interactionBusy?: boolean;
-  campaign?: { state: { tools: ToolId[] } };
+  campaign?: {
+    state: {
+      tools: ToolId[];
+      block?: number;
+      phase?: number;
+      call?: IncomingCall;
+    };
+  };
   settings?: {
     rotationSensitivity: number;
     reducedMotion: boolean;
@@ -61,6 +72,15 @@ type Particle = {
   fragment: boolean;
 };
 export class GameScene {
+  resources = new SceneResources();
+  destroyed = false;
+  frameError: {
+    message: string;
+    stack?: string;
+    phase?: string;
+    gridSamples: number;
+    tool?: ToolId;
+  } | null = null;
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
   assembly = new THREE.Group();
@@ -112,7 +132,7 @@ export class GameScene {
   fitPoint = new THREE.Vector3();
   camera = new THREE.OrthographicCamera();
   audio = new GameAudio();
-  ice: THREE.Mesh;
+  ice: ChunkedIceMesh;
   lootGroup = new THREE.Group();
   torch = new THREE.Group();
   flame: THREE.Mesh;
@@ -133,10 +153,13 @@ export class GameScene {
   uiTime = 0;
   oldField?: IceField;
   particles: Particle[] = [];
+  phaseShells: { mesh: THREE.Mesh; age: number; direction: THREE.Vector3 }[] =
+    [];
   lootMeshes = new Map<string, THREE.Group>();
   disposables: (() => void)[] = [];
   frames: number[] = [];
   renderTimes: number[] = [];
+  meshTimings: number[] = [];
   scratch = new THREE.Vector3();
   startup = {
     created: performance.now(),
@@ -310,8 +333,7 @@ export class GameScene {
     label.position.set(-2.15, 0.16, 1.96);
     label.scale.set(1.28, 0.2, 1);
     deck.add(label);
-    this.ice = new THREE.Mesh(
-      new THREE.BufferGeometry(),
+    this.ice = new ChunkedIceMesh(
       new THREE.MeshPhysicalMaterial({
         color: 0xffffff,
         vertexColors: true,
@@ -831,8 +853,7 @@ export class GameScene {
     });
     g.userData.contactSamples = meshContactSamples(
       g,
-      (TUNE.step * TUNE.worldScale * (this.model.field.profile?.scale ?? 1)) /
-        4,
+      this.model.field.grid.cellSize / 4,
     );
     g.position.set(t.x, t.y, t.z);
     g.rotation.y = t.kind === 'coin' ? 0.1 : -0.12 + t.x * 0.05;
@@ -840,32 +861,55 @@ export class GameScene {
     this.lootMeshes.set(t.id, g);
   }
   syncField() {
+    const meshStarted = performance.now();
     const delivered = this.oldField !== this.model.field;
     if (delivered) {
+      const inner =
+        !!this.oldField?.spec &&
+        this.oldField.spec.deliveryId === this.model.field.spec?.deliveryId &&
+        this.oldField.spec.phaseId !== this.model.field.spec?.phaseId;
+      if (inner && !this.model.settings?.reducedMotion) {
+        for (const chunk of this.ice.chunkMeshes.values()) {
+          if (!chunk.geometry.getAttribute('position')?.count) continue;
+          const material = new THREE.MeshPhysicalMaterial({
+            color: 0xabc4ca,
+            transparent: true,
+            opacity: 0.24,
+            roughness: 0.55,
+            depthWrite: false,
+          });
+          const mesh = new THREE.Mesh(chunk.geometry.clone(), material);
+          const center =
+            chunk.geometry.boundingSphere?.center ?? new THREE.Vector3();
+          this.contents.add(mesh);
+          this.phaseShells.push({
+            mesh,
+            age: 0,
+            direction: new THREE.Vector3(
+              Math.sign(center.x) * 0.8,
+              -1,
+              Math.sign(center.z) * 0.45,
+            ),
+          });
+        }
+      }
       for (const g of this.lootMeshes.values()) this.disposeObject(g);
       this.lootGroup.clear();
       this.lootMeshes.clear();
       this.clearParticles();
       this.oldField = this.model.field;
-      this.deliver();
+      this.ice.setField(this.model.field);
+      this.deliver(inner);
       for (const t of this.model.loot)
         if (t.state !== 'collected') this.makeLoot(t);
     }
-    const data = surface(this.model.field),
-      geo = new THREE.BufferGeometry();
-    geo.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(data.positions, 3),
+    this.ice.rebuild(
+      2.5,
+      this.model.firing ? this.localHit : undefined,
+      this.contents.worldToLocal(this.scratch.copy(this.camera.position)),
     );
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(data.colors, 3));
-    geo.computeVertexNormals();
-    geo.computeBoundingSphere();
-    if (delivered && data.positions.length) {
-      geo.computeBoundingBox();
-      this.ice.userData.deliveryBounds = geo.boundingBox?.clone();
-    }
-    this.ice.geometry.dispose();
-    this.ice.geometry = geo;
+    this.meshTimings.push(performance.now() - meshStarted);
+    if (this.meshTimings.length > 300) this.meshTimings.shift();
     // A visible cavity is distinct from physically freeing its supported find.
     for (const t of this.model.loot) {
       const g = this.lootMeshes.get(t.id);
@@ -1285,6 +1329,31 @@ export class GameScene {
     }
   }
   frame = (now: number) => {
+    if (this.destroyed || this.frameError) return;
+    try {
+      this.runFrame(now);
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      this.frameError = {
+        message: failure.message,
+        stack: failure.stack,
+        phase: this.model.phase,
+        gridSamples: this.model.field.values.length,
+        tool: this.model.toolId,
+      };
+      this.cancelInput();
+      cancelAnimationFrame(this.animation);
+      console.error('Frozen Assets frame stopped safely', this.frameError);
+      const notice = document.createElement('div');
+      notice.className = 'frame-failure';
+      notice.setAttribute('role', 'alert');
+      notice.textContent =
+        'The bench stopped unexpectedly. Reload to resume your last recovery.';
+      this.host.appendChild(notice);
+      this.disposables.push(() => notice.remove());
+    }
+  };
+  private runFrame = (now: number) => {
     if (document.hidden) {
       this.last = now;
       this.animation = requestAnimationFrame(this.frame);
@@ -1294,6 +1363,23 @@ export class GameScene {
       rawDt = this.last ? (now - this.last) / 1000 : 1 / 60;
     this.last = now;
     const dt = Math.min(rawDt, 0.033);
+    for (let i = this.phaseShells.length - 1; i >= 0; i--) {
+      const shell = this.phaseShells[i];
+      shell.age += dt;
+      shell.mesh.position.addScaledVector(
+        shell.direction,
+        dt * (1 + shell.age * 3),
+      );
+      (shell.mesh.material as THREE.MeshPhysicalMaterial).opacity = Math.max(
+        0,
+        0.24 * (1 - shell.age / 0.75),
+      );
+      if (shell.age >= 0.75) {
+        shell.mesh.removeFromParent();
+        this.resources.disposeGraph(shell.mesh);
+        this.phaseShells.splice(i, 1);
+      }
+    }
     this.model.interactionBusy = this.gesture === 'rotate' || this.messageBusy;
     const scale =
       this.model.inTutorial && this.model.tutorial?.block === 0
@@ -1325,7 +1411,9 @@ export class GameScene {
     ) {
       this.ringClock -= dt;
       if (this.ringClock <= 0) {
-        this.audio.ring();
+        this.audio.ring(
+          incomingCallPresentation(this.model.campaign?.state.call).ring,
+        );
         this.workshop.ring();
         this.ringClock = 4.2;
       }
@@ -1360,6 +1448,9 @@ export class GameScene {
       now / 1000,
       this.model.paused || !!this.model.phoneOffHook,
       this.entry.value,
+      this.model.campaign?.state.block === 31
+        ? (this.model.campaign.state.phase ?? 0)
+        : undefined,
     );
     const deliveryFade = this.deliveryFade.step(rawDt, reduced);
     (this.ice.material as THREE.MeshPhysicalMaterial).opacity =
@@ -1441,7 +1532,7 @@ export class GameScene {
       simulationTime -= step;
     }
     this.meshTime += dt;
-    if (this.model.field.dirty && this.meshTime >= TUNE.meshInterval) {
+    if (this.model.field.dirty || this.model.field.dirtyChunks.size) {
       this.syncField();
       this.meshTime = 0;
     }
@@ -1533,23 +1624,7 @@ export class GameScene {
     this.lastToolPointer.copy(this.pointer);
     follower.followPosition(dt, pointerSpeed);
     this.toolOut.copy(follower.smoothedNormal);
-    this.toolAlong.copy(this.camera.position).sub(follower.displayPosition);
-    this.toolAlong.addScaledVector(
-      this.toolOut,
-      -this.toolAlong.dot(this.toolOut),
-    );
-    if (this.toolAlong.lengthSq() < 0.001)
-      this.toolAlong
-        .set(0, 0, 1)
-        .addScaledVector(this.toolOut, -this.toolOut.z);
-    this.toolAlong.normalize();
-    this.toolAcross.crossVectors(this.toolOut, this.toolAlong).normalize();
-    this.toolAlong.crossVectors(this.toolAcross, this.toolOut).normalize();
-    this.surfaceBasis.makeBasis(this.toolAcross, this.toolOut, this.toolAlong);
-    follower.targetRotation.setFromRotationMatrix(this.surfaceBasis);
-    follower.targetRotation.multiply(
-      this.toolRoll.setFromAxisAngle(this.toolAxis, -0.58),
-    );
+    follower.orient(this.camera.position);
     const toolScale = Math.min(
       1.2,
       Math.max(0.38, Math.sqrt(this.model.campaignScale ?? 1)),
@@ -1579,10 +1654,12 @@ export class GameScene {
         );
       }
     }
+    follower.guardHemisphere();
     follower.followRotation(dt);
     const pose = strikePose(
       this.model.strike?.active ? this.model.strike.progress : 1,
       this.model.toolId === 'hand' || this.model.toolId === 'grip',
+      this.model.toolId,
     );
     if (this.model.toolId === 'sledge' && (this.model.chargeTime ?? 0) > 0) {
       const charge = Math.min(1, this.model.chargeTime! / 0.65);
@@ -1602,9 +1679,32 @@ export class GameScene {
         ),
       );
     this.workshop.hand.scale.setScalar(toolScale * presence);
+    const bit = this.workshop.hand.getObjectByName('working-bit');
+    if (bit)
+      bit.position.z =
+        bit.userData.restZ +
+        (firing && !reduced ? Math.max(0, Math.sin(now * 0.135)) * 0.025 : 0);
+    const hose = this.workshop.hand.getObjectByName('thermal-hose');
+    if (hose)
+      hose.quaternion.setFromAxisAngle(
+        this.toolAxis,
+        reduced
+          ? 0
+          : Math.sin(now * 0.004) * 0.012 +
+              Math.min(pointerSpeed / 20000, 0.025),
+      );
     if (this.model.toolId === 'breaker' && firing && !reduced) {
-      this.workshop.hand.position.y += Math.sin(now * 0.135) * 0.035;
-      this.workshop.hand.rotation.z += Math.sin(now * 0.089) * 0.015;
+      const steady = this.model.fittings?.steadiness ?? 1;
+      this.workshop.hand.position.addScaledVector(
+        this.toolOut,
+        Math.sin(now * 0.135) * 0.018 * steady,
+      );
+      this.workshop.hand.quaternion.multiply(
+        this.toolRoll.setFromAxisAngle(
+          this.toolOut,
+          Math.sin(now * 0.089) * 0.012 * steady,
+        ),
+      );
     }
     this.contact.visible =
       !!hit &&
@@ -1922,7 +2022,7 @@ export class GameScene {
       );
     }
   }
-  deliver() {
+  deliver(inner = false) {
     this.deliveryMass = THREE.MathUtils.clamp(
       (this.model.campaignScale ?? 1) ** 2,
       0.65,
@@ -1931,11 +2031,13 @@ export class GameScene {
     const massRoot = Math.sqrt(this.deliveryMass);
     this.delivery.stiffness = 170 / massRoot;
     this.delivery.damping = 17 + (this.deliveryMass - 1) * 1.5;
-    this.delivery.set(this.model.settings?.reducedMotion ? 0 : 3.6 * massRoot);
+    this.delivery.set(
+      this.model.settings?.reducedMotion ? 0 : inner ? 0.1 : 3.6 * massRoot,
+    );
     this.deliveryFade.set(0);
     this.deliveryFade.target = 1;
     this.delivery.target = 0;
-    this.deliveryLanded = false;
+    this.deliveryLanded = inner;
     this.swing.set(0);
     this.toolFollow.reset();
     this.flameFlow.set(0);
@@ -1958,15 +2060,7 @@ export class GameScene {
     this.particles = [];
   }
   disposeObject(o: THREE.Object3D) {
-    o.traverse((n) => {
-      if (n instanceof THREE.Mesh) {
-        n.geometry.dispose();
-        for (const m of Array.isArray(n.material) ? n.material : [n.material]) {
-          m.map?.dispose();
-          m.dispose();
-        }
-      }
-    });
+    this.resources.disposeGraph(o);
   }
   stats() {
     const s = [...this.frames].sort((a, b) => a - b),
@@ -1992,6 +2086,11 @@ export class GameScene {
             projected.bottom = Math.max(projected.bottom, (1 - p.y) / 2);
           }
     return {
+      frameError: this.frameError,
+      grid: this.model.field.grid,
+      materials: this.model.field.materialCounts(),
+      chunks: this.ice.stats,
+      fieldMetrics: this.model.field.metrics,
       framing: {
         ...projected,
         width: projected.right - projected.left,
@@ -2014,6 +2113,7 @@ export class GameScene {
         (this.frames.reduce((a, b) => a + b, 0) /
           Math.max(1, this.frames.length)),
       frameP95: s[Math.floor(s.length * 0.95)],
+      frameP50: s[Math.floor(s.length * 0.5)],
       frameP99: s[Math.floor(s.length * 0.99)],
       frameMax: s[s.length - 1],
       framesOver50ms: s.filter((ms) => ms > 50).length,
@@ -2024,6 +2124,12 @@ export class GameScene {
       drawCalls: this.renderer.info.render.calls,
       triangles: this.renderer.info.render.triangles,
       geometries: this.renderer.info.memory.geometries,
+      textures: this.renderer.info.memory.textures,
+      programs: this.renderer.info.programs?.length ?? 0,
+      meshMs: this.meshTimings.at(-1) ?? 0,
+      meshMean:
+        this.meshTimings.reduce((a, b) => a + b, 0) /
+        Math.max(1, this.meshTimings.length),
       particles: this.particles.length,
       pooledParticles: this.particlePool.length,
       motion: {
@@ -2049,16 +2155,30 @@ export class GameScene {
     };
   }
   dispose() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.automation = undefined;
+    this.model.stop();
+    this.model.contactSamples = undefined;
     cancelAnimationFrame(this.animation);
     this.disposables.forEach((fn) => fn());
     this.audio.dispose();
-    this.particlePool.forEach((p) =>
-      (p.mesh.material as THREE.Material).dispose(),
-    );
-    this.fragmentGeometry.dispose();
-    this.vaporGeometry.dispose();
+    this.particlePool.forEach((p) => this.resources.disposeGraph(p.mesh));
+    this.resources.dispose(this.fragmentGeometry);
+    this.resources.dispose(this.vaporGeometry);
+    this.ice.removeFromParent();
+    this.ice.dispose();
+    this.resources.dispose(this.ice.material);
     this.disposeObject(this.scene);
+    this.particles = [];
+    this.phaseShells = [];
+    this.particlePool = [];
+    this.lootMeshes.clear();
+    this.workshop.labels.length = 0;
+    this.workshop.arrivals.clear();
+    this.renderer.renderLists.dispose();
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
   }
 }

@@ -15,6 +15,7 @@ import {
   BRANCH_COLORS,
   canonicalTool,
   nodeState,
+  nodeComparison,
   treeLink,
   type MajorTool,
   type ToolNodesOwned,
@@ -27,6 +28,13 @@ import { ToolGlyph } from './tool-selector';
 import { ToolDisplay } from './tool-display';
 import { SpringNumber } from './motion';
 import { ZoomSlider } from './zoom-slider';
+import { UpgradeGlyph } from './upgrade-glyph';
+import {
+  TREE_GROWTH,
+  growthPlan,
+  connectedNode,
+  tooltipPosition,
+} from '@/lib/game/tree-presentation';
 export type MapView = { x: number; y: number; zoom: number };
 export type ToolMapViews = Partial<Record<ToolId, MapView>>;
 type Props = {
@@ -58,17 +66,16 @@ const short: Record<MajorTool, string> = {
 };
 export function SkillTree(props: Props) {
   const [page, setPage] = useState<MajorTool>(
-    canonicalTool(
-      props.requestedTool ?? props.equipment?.selected ?? 'thermal',
-    ),
+    canonicalTool(props.requestedTool ?? props.equipment?.selected ?? 'hand'),
   );
   const [leaving, setLeaving] = useState(false),
     timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const known = (id: MajorTool) =>
-    !props.equipment
-      ? id === 'thermal'
+    id === 'hand' ||
+    (!props.equipment
+      ? false
       : props.equipment.revealed.includes(id) ||
-        props.equipment.owned.some((t) => canonicalTool(t) === id);
+        props.equipment.owned.some((t) => canonicalTool(t) === id));
   const switchPage = (id: MajorTool) => {
     if (id === page || !known(id)) return;
     if (timer.current) clearTimeout(timer.current);
@@ -79,7 +86,12 @@ export function SkillTree(props: Props) {
     }, 110);
   };
   const switchDirection = (direction: number) => {
-    const choices = TOOL_ORDER.filter(known);
+    const choices = TOOL_ORDER.filter(
+      (id) =>
+        !props.equipment ||
+        props.equipment.owned.some((t) => canonicalTool(t) === id),
+    );
+    if (!choices.length) return;
     switchPage(
       choices[
         (choices.indexOf(page) + direction + choices.length) % choices.length
@@ -151,31 +163,12 @@ export function SkillTree(props: Props) {
     </>
   );
 }
-function NodeGlyph({ node }: { node: ToolNode }) {
-  return (
-    <span className={`node-glyph branch-${node.branch}`}>
-      <ToolGlyph id={node.toolId} />
-      <svg
-        viewBox="0 0 32 32"
-        className="node-mark"
-        aria-hidden="true"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        {node.branch === 'power' ? (
-          <path d="M8 24L18 5l-1 11h8L12 28l3-11" />
-        ) : node.branch === 'speed' ? (
-          <path d="M5 9h20M3 16h17M7 23h16" />
-        ) : node.branch === 'control' ? (
-          <path d="M4 12V4h8M20 4h8v8M28 20v8h-8M12 28H4v-8M13 16h6M16 13v6" />
-        ) : (
-          <path d="M16 3l-4 11 9 6-6 10M12 14l-8-4M21 20l8-7" />
-        )}
-      </svg>
-    </span>
-  );
-}
+type Growth = {
+  id: string;
+  revealed: boolean;
+  major: boolean;
+  changes: ReturnType<typeof growthPlan>;
+};
 function ToolPage({
   page,
   nodes,
@@ -193,7 +186,9 @@ function ToolPage({
   const list = TOOL_TREES[page],
     owned = nodes[page],
     ownTool =
-      !equipment || equipment.owned.some((t) => canonicalTool(t) === page),
+      page === 'hand' ||
+      !equipment ||
+      equipment.owned.some((t) => canonicalTool(t) === page),
     tool = TOOLS.find((t) => t.id === page)!;
   const viewport = useRef<HTMLDivElement>(null),
     map = useRef<HTMLDivElement>(null),
@@ -202,17 +197,78 @@ function ToolPage({
     zoom = useRef(new Spring(savedView?.zoom ?? 0.88, 220, 30));
   const [targetZoom, setTargetZoom] = useState(savedView?.zoom ?? 0.88),
     [inspection, setInspection] = useState<string | null>(null),
-    [fitted, setFitted] = useState('');
+    [growth, setGrowth] = useState<Growth[]>([]);
+  const growthTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const suppressedClick = useRef(false);
+  useEffect(() => () => growthTimers.current.forEach(clearTimeout), []);
+  const presentationState = (n: ToolNode) => {
+    const pending = growth
+      .filter((g) => !g.revealed)
+      .flatMap((g) => g.changes)
+      .find((c) => c.id === n.id);
+    return pending?.from ?? nodeState(n, owned);
+  };
   const selected = useRef<string | null>(null),
-    drag = useRef<{ id: number; x: number; y: number; time: number } | null>(
-      null,
-    ),
+    drag = useRef<{
+      id: number;
+      x: number;
+      y: number;
+      startX: number;
+      startY: number;
+      time: number;
+      active: boolean;
+    } | null>(null),
     anchor = useRef({ x: 0, y: 0 });
   const travel = useRef<{ x: Spring; y: Spring } | null>(null);
+  const ownership = useRef({
+    hover: null as string | null,
+    focus: null as string | null,
+    touch: null as string | null,
+  });
+  const pointerKind = useRef('mouse');
+  const pointerPressed = useRef(false),
+    focusOwner = useRef<HTMLElement | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [closing, setClosing] = useState(false);
+  useEffect(
+    () => () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
   const inspect = (id: string | null) => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+    setClosing(false);
     selected.current = id;
     setInspection(id);
   };
+  const reconcileInspection = () => {
+    const o = ownership.current;
+    // Disabling the Buy button can remove native focus without a React blur.
+    // A remembered id is not proof that anything still owns keyboard focus.
+    if (
+      o.focus &&
+      (!focusOwner.current?.isConnected ||
+        document.activeElement !== focusOwner.current ||
+        focusOwner.current.matches(':disabled'))
+    ) {
+      o.focus = null;
+      focusOwner.current = null;
+    }
+    const id = o.hover ?? o.focus ?? o.touch;
+    if (id) {
+      inspect(id);
+      return;
+    }
+    if (closeTimer.current) return;
+    setClosing(true);
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = null;
+      inspect(null);
+    }, 110);
+  };
+  const reconcileFrame = useEffectEvent(reconcileInspection);
   const draw = () => {
     if (map.current) {
       map.current.style.transform = `translate3d(${pan.current.x}px,${pan.current.y}px,0) scale(${zoom.current.value})`;
@@ -224,14 +280,23 @@ function ToolPage({
           y = pan.current.y + node.y * zoom.current.value,
           w = panel.offsetWidth,
           h = panel.offsetHeight;
-        panel.style.setProperty(
-          '--tip-x',
-          `${Math.max(18, Math.min(v.clientWidth - w - 18, x + 45 + w < v.clientWidth - 62 ? x + 45 : x - 45 - w))}px`,
+        const neighbors = list
+          .filter(
+            (n) => n.id !== node.id && nodeState(n, owned) === 'available',
+          )
+          .map((n) => ({
+            x: pan.current.x + n.x * zoom.current.value,
+            y: pan.current.y + n.y * zoom.current.value,
+          }));
+        const pos = tooltipPosition(
+          { x, y },
+          neighbors,
+          { w, h },
+          { w: v.clientWidth, h: v.clientHeight },
+          (node.major ? 44 : 32) * zoom.current.value,
         );
-        panel.style.setProperty(
-          '--tip-y',
-          `${Math.max(152, Math.min(v.clientHeight - h - 96, y - h * 0.4))}px`,
-        );
+        panel.style.setProperty('--tip-x', `${pos.x}px`);
+        panel.style.setProperty('--tip-y', `${pos.y}px`);
       }
       map.current.dataset.zoom = zoom.current.value.toFixed(4);
       map.current.dataset.targetZoom = zoom.current.target.toFixed(4);
@@ -271,10 +336,15 @@ function ToolPage({
     x: number,
     y: number,
   ) => {
+    if (
+      pointerKind.current !== 'keyboard' &&
+      !e.currentTarget.matches(':focus-visible')
+    )
+      return;
     const r = e.currentTarget.getBoundingClientRect(),
       v = viewport.current!.getBoundingClientRect();
     if (
-      r.top < v.top + 100 ||
+      r.top < v.top + 160 ||
       r.bottom > v.bottom - 110 ||
       r.left < v.left + 90 ||
       r.right > v.right - 90
@@ -313,13 +383,60 @@ function ToolPage({
           travel.current = null;
       } else p.update(dt);
       drawFrame();
+      // Covers native disabled-focus loss, removed nodes, and focus repair by
+      // the surrounding dialog. Neither a purchase nor a render pins a tip.
+      if (
+        ownership.current.focus &&
+        (document.activeElement !== focusOwner.current ||
+          !focusOwner.current?.isConnected ||
+          focusOwner.current.matches(':disabled'))
+      )
+        reconcileFrame();
       frame = requestAnimationFrame(loop);
     };
     frame = requestAnimationFrame(loop);
     const cancel = () => {
       p.cancel();
       drag.current = null;
+      pointerPressed.current = false;
+      focusOwner.current = null;
+      ownership.current = { hover: null, focus: null, touch: null };
+      reconcileFrame();
       v.removeAttribute('data-dragging');
+    };
+    const pointer = (e: PointerEvent) => {
+      pointerKind.current = e.pointerType || 'mouse';
+      if (e.type === 'pointerdown') pointerPressed.current = true;
+      // Mouse movement takes over from keyboard inspection, including when
+      // Chrome retains :focus-visible on a previously keyboard-focused node.
+      ownership.current.focus = null;
+      focusOwner.current = null;
+      if (e.pointerType !== 'touch') {
+        ownership.current.touch = null;
+        const target = e.target instanceof Element ? e.target : null,
+          button = target?.closest<HTMLElement>('.map-node'),
+          panel = tip.current;
+        ownership.current.hover =
+          button && map.current?.contains(button)
+            ? (button.dataset.skill ?? null)
+            : target && panel?.contains(target)
+              ? selected.current
+              : null;
+      }
+      reconcileFrame();
+    };
+    const pointerUp = () => {
+      pointerPressed.current = false;
+    };
+    const keyInput = () => {
+      pointerKind.current = 'keyboard';
+      pointerPressed.current = false;
+    };
+    const outside = (e: PointerEvent) => {
+      if (!e.relatedTarget) cancel();
+    };
+    const visibility = () => {
+      if (document.hidden) cancel();
     };
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -340,49 +457,73 @@ function ToolPage({
     };
     v.addEventListener('wheel', wheel, { passive: false });
     window.addEventListener('blur', cancel);
+    document.addEventListener('pointermove', pointer, true);
+    document.addEventListener('pointerdown', pointer, true);
+    document.addEventListener('pointerup', pointerUp, true);
+    document.addEventListener('pointercancel', cancel, true);
+    document.addEventListener('pointerout', outside, true);
+    document.addEventListener('keydown', keyInput, true);
+    document.addEventListener('visibilitychange', visibility);
     window.addEventListener('recovery:map-action', controller);
     return () => {
       saveView({ x: p.x, y: p.y, zoom: zoomSpring.target });
       cancelAnimationFrame(frame);
       v.removeEventListener('wheel', wheel);
       window.removeEventListener('blur', cancel);
+      document.removeEventListener('pointermove', pointer, true);
+      document.removeEventListener('pointerdown', pointer, true);
+      document.removeEventListener('pointerup', pointerUp, true);
+      document.removeEventListener('pointercancel', cancel, true);
+      document.removeEventListener('pointerout', outside, true);
+      document.removeEventListener('keydown', keyInput, true);
+      document.removeEventListener('visibilitychange', visibility);
       window.removeEventListener('recovery:map-action', controller);
     };
   }, []);
 
   const node = list.find((n) => n.id === inspection),
-    state = node ? nodeState(node, owned) : null;
+    state = node ? presentationState(node) : null;
   const buy = (id: string) => {
-    if (purchase(id, page)) setFitted(id);
+    const n = list.find((n) => n.id === id);
+    if (!n || presentationState(n) !== 'available' || !canPurchase) return;
+    const changes = growthPlan(page, id, owned);
+    if (!purchase(id, page)) return;
+    const reduced =
+      !!viewport.current?.closest('.reduced-motion') ||
+      matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) return;
+    setGrowth((g) => [...g, { id, revealed: false, major: n.major, changes }]);
+    growthTimers.current.push(
+      setTimeout(
+        () =>
+          setGrowth((g) =>
+            g.map((e) => (e.id === id ? { ...e, revealed: true } : e)),
+          ),
+        TREE_GROWTH.revealAt,
+      ),
+    );
+    growthTimers.current.push(
+      setTimeout(
+        () => setGrowth((g) => g.filter((e) => e.id !== id)),
+        TREE_GROWTH.settleAt,
+      ),
+    );
   };
-  const spatial = (e: React.KeyboardEvent, x: number, y: number) => {
+  const spatial = (e: React.KeyboardEvent, id: string) => {
     const dx = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0,
       dy = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
     if (!dx && !dy) return;
     e.preventDefault();
     e.stopPropagation();
-    const candidates = [{ id: 'root', x: TREE.rootX, y: TREE.rootY }, ...list]
-      .filter((n) => (n.x - x) * dx + (n.y - y) * dy > 1)
-      .sort((a, b) => {
-        const score = (n: { x: number; y: number }) => {
-          const xx = n.x - x,
-            yy = n.y - y;
-          return (
-            Math.hypot(xx, yy) *
-            (1 + Math.abs(xx * dy - yy * dx) / Math.max(1, xx * dx + yy * dy))
-          );
-        };
-        return score(a) - score(b);
-      });
-    const next = candidates[0];
+    const next = connectedNode(page, id, dx, dy);
     if (next)
       map.current
-        ?.querySelector<HTMLButtonElement>(`[data-skill="${next.id}"]`)
+        ?.querySelector<HTMLButtonElement>(`[data-skill="${next}"]`)
         ?.focus();
   };
   return (
     <div
-      className={`upgrade-world radial-world tree-context ${ownTool ? '' : 'tool-unowned'}`}
+      className={`upgrade-world radial-world tree-context tool-map-${page} ${ownTool ? '' : 'tool-unowned'} ${growth.some((g) => g.major) ? 'major-growing' : ''}`}
     >
       {!ownTool && (
         <section className="tool-inspection">
@@ -417,25 +558,59 @@ function ToolPage({
         role="application"
         tabIndex={0}
         aria-label="Upgrade map. Drag to explore, wheel to zoom, arrow keys to pan."
+        onClickCapture={(e) => {
+          if (suppressedClick.current) {
+            suppressedClick.current = false;
+            if (e.detail !== 0) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }
+        }}
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest('button')) {
+            ownership.current = { hover: null, focus: null, touch: null };
+            reconcileInspection();
+          }
+        }}
         onPointerDown={(e) => {
-          if (e.button !== 0 || (e.target as HTMLElement).closest('button'))
-            return;
-          e.preventDefault();
-          e.currentTarget.setPointerCapture(e.pointerId);
+          if (e.button !== 0) return;
+          const onNode = !!(e.target as HTMLElement).closest('button');
+          if (!onNode) {
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }
+          suppressedClick.current = false;
           travel.current = null;
           pan.current.begin();
-          inspect(null);
+          if (!onNode) {
+            ownership.current = { hover: null, focus: null, touch: null };
+            inspect(null);
+          }
           drag.current = {
             id: e.pointerId,
             x: e.clientX,
             y: e.clientY,
+            startX: e.clientX,
+            startY: e.clientY,
             time: e.timeStamp,
+            active: !onNode,
           };
-          e.currentTarget.dataset.dragging = 'true';
+          if (!onNode) e.currentTarget.dataset.dragging = 'true';
         }}
         onPointerMove={(e) => {
           const d = drag.current;
           if (!d || d.id !== e.pointerId) return;
+          if (!d.active) {
+            if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 7)
+              return;
+            d.active = true;
+            suppressedClick.current = true;
+            ownership.current = { hover: null, focus: null, touch: null };
+            inspect(null);
+            e.currentTarget.setPointerCapture(e.pointerId);
+            e.currentTarget.dataset.dragging = 'true';
+          }
           const now = e.timeStamp;
           pan.current.drag(
             e.clientX - d.x,
@@ -447,11 +622,13 @@ function ToolPage({
         }}
         onPointerUp={(e) => {
           const d = drag.current;
-          if (!d) return;
+          if (!d || d.id !== e.pointerId) return;
           if (e.timeStamp - d.time > 90) pan.current.vx = pan.current.vy = 0;
           drag.current = null;
           delete e.currentTarget.dataset.dragging;
-          pan.current.end(!!e.currentTarget.closest('.reduced-motion'));
+          if (d.active)
+            pan.current.end(!!e.currentTarget.closest('.reduced-motion'));
+          else pan.current.cancel();
         }}
         onPointerCancel={(e) => {
           drag.current = null;
@@ -494,15 +671,38 @@ function ToolPage({
             height={TREE.height}
             aria-hidden="true"
           >
-            {list.map((n) => (
-              <path
-                key={n.id}
-                d={treeLink(n)}
-                pathLength="1"
-                style={{ '--branch': BRANCH_COLORS[n.branch] } as CSSProperties}
-                className={`map-current ${nodeState(n, owned)} ${fitted === n.id ? 'waking' : ''}`}
-              />
-            ))}
+            {list.map((n) => {
+              const event = growth.find((g) => g.id === n.id),
+                state = presentationState(n);
+              const reveal = growth.some(
+                (g) => g.revealed && g.changes.some((c) => c.id === n.id),
+              );
+              return (
+                <g
+                  key={n.id}
+                  style={
+                    {
+                      '--branch': BRANCH_COLORS[n.branch],
+                      '--path-delay': `${TREE_GROWTH.pathDelay}ms`,
+                      '--path-duration': `${TREE_GROWTH.pathDuration}ms`,
+                    } as CSSProperties
+                  }
+                >
+                  <path
+                    d={treeLink(n)}
+                    pathLength="1"
+                    className={`map-current ${event ? 'available' : state} ${inspection === n.id ? 'inspected' : ''} ${reveal ? 'path-revealed' : ''}`}
+                  />
+                  {event && (
+                    <path
+                      d={treeLink(n)}
+                      pathLength="1"
+                      className="map-current purchased purchase-travel"
+                    />
+                  )}
+                </g>
+              );
+            })}
           </svg>
           <TactileButton
             data-skill="root"
@@ -510,23 +710,37 @@ function ToolPage({
             style={{ left: TREE.rootX, top: TREE.rootY }}
             aria-label={`${tool.name}, owned. Equip tool.`}
             onClick={() => equipment?.equip(page)}
-            onKeyDown={(e) => spatial(e, TREE.rootX, TREE.rootY)}
+            onFocus={(e) => focus(e, TREE.rootX, TREE.rootY)}
+            onKeyDown={(e) => spatial(e, 'root')}
           >
             <ToolGlyph id={page} />
           </TactileButton>
           {list.map((n) => {
-            const state = nodeState(n, owned),
+            const state = presentationState(n),
               unknown = state === 'unknown';
+            const bought = growth.some((g) => g.id === n.id),
+              child = growth.some(
+                (g) =>
+                  g.revealed && g.changes.some((c) => c.id === n.id && c.child),
+              ),
+              teased = growth.some(
+                (g) =>
+                  g.revealed &&
+                  g.changes.some((c) => c.id === n.id && !c.child),
+              );
             return (
-              <TactileButton
+              <button
+                type="button"
                 key={n.id}
                 data-skill={n.id}
-                className={`map-node ${state} ${n.major ? 'milestone' : ''} ${inspection === n.id ? 'selected' : ''} ${state === 'available' && money >= n.cost ? 'affordable' : ''} ${fitted === n.id ? 'bought' : ''} ${n.parentIds.includes(fitted) ? 'awakened' : ''}`}
+                hidden={state === 'hidden'}
+                className={`map-node engraved-node ${state} ${n.major ? 'milestone' : ''} ${inspection === n.id ? 'selected' : ''} ${state === 'available' && money >= n.cost ? 'affordable' : ''} ${bought ? 'fitting' : ''} ${child ? 'child-revealed' : ''} ${teased ? 'tease-revealed' : ''}`}
                 style={
                   {
                     left: n.x,
                     top: n.y,
                     '--branch': BRANCH_COLORS[n.branch],
+                    '--entry-delay': `${45 + n.rank * 24}ms`,
                   } as CSSProperties
                 }
                 aria-label={
@@ -535,25 +749,77 @@ function ToolPage({
                     : `${n.name}. ${state}. ${n.cost} dollars.`
                 }
                 aria-pressed={state === 'purchased'}
-                onPointerEnter={() => inspect(n.id)}
+                onPointerEnter={(e) => {
+                  if (e.pointerType === 'touch') return;
+                  ownership.current.hover = n.id;
+                  if (!drag.current?.active) reconcileInspection();
+                }}
+                onPointerLeave={() => {
+                  if (ownership.current.hover === n.id)
+                    ownership.current.hover = null;
+                  reconcileInspection();
+                }}
+                onPointerDown={(e) => {
+                  pointerKind.current = e.pointerType;
+                  ownership.current.focus = null;
+                  ownership.current.touch = null;
+                  if (e.pointerType === 'touch') ownership.current.hover = null;
+                }}
                 onFocus={(e) => {
-                  inspect(n.id);
+                  if (
+                    !pointerPressed.current &&
+                    (pointerKind.current === 'keyboard' ||
+                      e.currentTarget.matches(':focus-visible'))
+                  ) {
+                    ownership.current.hover = null;
+                    ownership.current.focus = n.id;
+                    focusOwner.current = e.currentTarget;
+                    reconcileInspection();
+                  }
                   focus(e, n.x, n.y);
                 }}
-                onKeyDown={(e) => spatial(e, n.x, n.y)}
-                onClick={() => {
-                  inspect(n.id);
+                onBlur={() => {
+                  if (ownership.current.focus === n.id)
+                    ownership.current.focus = null;
+                  reconcileInspection();
+                }}
+                onKeyDown={(e) => spatial(e, n.id)}
+                onClick={(e) => {
+                  if (pointerKind.current === 'touch' && e.detail !== 0) {
+                    ownership.current.touch = n.id;
+                    inspect(n.id);
+                    return;
+                  }
+                  if (
+                    e.detail === 0 &&
+                    document.activeElement === e.currentTarget &&
+                    (pointerKind.current === 'keyboard' ||
+                      e.currentTarget.matches(':focus-visible'))
+                  ) {
+                    ownership.current.focus = n.id;
+                    focusOwner.current = e.currentTarget;
+                  }
+                  reconcileInspection();
                   if (state === 'available' && canPurchase) buy(n.id);
                 }}
               >
-                <span className="node-face">
-                  {unknown ? (
-                    <span className="node-question">?</span>
-                  ) : (
-                    <NodeGlyph node={n} />
-                  )}
+                <span className="node-entry">
+                  <span className="node-arrival">
+                    <span className="node-spring">
+                      <span className="node-face">
+                        {unknown ? (
+                          <span className="node-question">?</span>
+                        ) : (
+                          <UpgradeGlyph
+                            key={state === 'purchased' ? 'fitted' : 'unfitted'}
+                            node={n}
+                          />
+                        )}
+                      </span>
+                    </span>
+                  </span>
                 </span>
-              </TactileButton>
+              </button>
             );
           })}
           <div
@@ -574,7 +840,37 @@ function ToolPage({
       {node && ownTool && (
         <aside
           ref={tip}
-          className="map-inspection skill-detail node-tooltip"
+          className={`map-inspection skill-detail node-tooltip ${closing ? 'closing' : ''}`}
+          onPointerEnter={(e) => {
+            if (e.pointerType !== 'touch') {
+              ownership.current.hover = node.id;
+              reconcileInspection();
+            }
+          }}
+          onPointerLeave={() => {
+            ownership.current.hover = null;
+            reconcileInspection();
+          }}
+          onPointerDown={() => {
+            ownership.current.focus = null;
+          }}
+          onFocus={(e) => {
+            if (
+              !pointerPressed.current &&
+              (pointerKind.current === 'keyboard' ||
+                (e.target as HTMLElement).matches(':focus-visible'))
+            ) {
+              ownership.current.focus = node.id;
+              focusOwner.current = e.target as HTMLElement;
+              reconcileInspection();
+            }
+          }}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget)) {
+              ownership.current.focus = null;
+              reconcileInspection();
+            }
+          }}
           key={node.id}
           aria-live="polite"
         >
@@ -584,7 +880,9 @@ function ToolPage({
               ? 'Keep upgrading this branch to discover more.'
               : node.description}
           </p>
-          {state !== 'unknown' && <strong>{node.comparison}</strong>}
+          {state !== 'unknown' && (
+            <strong>{nodeComparison(node, owned)}</strong>
+          )}
           <TactileButton
             className="tree-buy"
             disabled={

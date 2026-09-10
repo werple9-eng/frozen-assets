@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { GameModel } from '../lib/game/model';
 import { STORY, TOOLS } from '../lib/game/campaign-content';
 import {
+  MAJOR_STORY_EVENTS,
+  MAJOR_RETIRED_STORY_IDS,
+} from '../lib/game/major-story';
+import { campaignField, campaignLoot } from '../lib/game/campaign-layout';
+import {
   TUTORIAL_SCRIPT,
   AUTHORED_DIALOGUE,
 } from '../lib/game/authored-dialogue';
@@ -95,27 +100,36 @@ void test('outgoing dial, tutorial map acknowledgement and board history cannot 
   );
 });
 void test('campaign scripts remain verbatim and final calls can drain after completion', () => {
-  for (const lines of Object.values(AUTHORED_DIALOGUE))
-    for (const text of lines)
-      assert.ok(
-        STORY.some(
-          (e) => !e.retired && e.messages.some((m) => m.text === text),
-        ),
-        text,
-      );
+  for (const [id, lines] of Object.entries(AUTHORED_DIALOGUE)) {
+    const replacement = MAJOR_STORY_EVENTS.find((event) => event.id === id);
+    const event = STORY.find((event) => event.id === id);
+    assert.ok(event, id);
+    assert.deepEqual(
+      event.messages.map((message) => message.text),
+      replacement?.messages.map((message) => message.text) ?? lines,
+      id,
+    );
+    if (MAJOR_RETIRED_STORY_IDS.some((retired) => retired === id))
+      assert.equal(event.retired, true, id);
+  }
   const m = new GameModel(),
     c = m.campaign!;
   c.state.block = 31;
+  c.state.phase = c.block.phases - 1;
   m.round = 31;
-  c.state.objects = ['ledger'];
+  m.field = campaignField(31, c.state.phase, undefined, 3);
+  m.loot = campaignLoot(31, c.state.phase, 3);
   c.state.pending = [];
-  c.finish();
-  m.phase = 'completed';
+  m.field.values.fill(0);
+  m.field.dirty = true;
   for (let i = 0; i < 12; i++) {
     for (let frame = 0; frame < 80; frame++) m.update(0.05, null);
     if (m.phoneRinging) m.answerPhone();
     while (m.liveCall) m.advanceCall();
+    m.skipSettlement();
   }
+  assert.equal(m.phase, 'completed');
+  assert.ok(c.state.read.includes('ch5.recovered'));
   assert.equal(c.state.pending.length, 0);
   assert.ok(c.state.read.includes('epilogue'));
 });
@@ -127,6 +141,9 @@ void test('the previous two-item practice parcel migrates without changing money
   m.loot = tutorialLoot(2, true);
   m.field.carveLoot(m.loot);
   const raw = JSON.parse(m.serialize());
+  raw.version = 4;
+  raw.ice = Array.from(m.field.values);
+  delete raw.field;
   raw.tutorial.revision = 1;
   delete raw.tutorial.mode;
   const n = new GameModel(JSON.stringify(raw));

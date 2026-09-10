@@ -8,15 +8,34 @@ import {
 import type { CampaignSave } from '@/lib/game/campaign';
 import { TactileButton } from './tactile';
 import { tutorialHistory, type TutorialSave } from '@/lib/game/tutorial';
+import { EVIDENCE_ANNOTATIONS, storySpeaker } from '@/lib/game/major-story';
+import '@/app/major-progression.css';
 export function Phone({
   state,
   tutorial,
+  onInspect,
 }: {
   state: CampaignSave;
   tutorial?: TutorialSave;
+  onInspect?: (id: StoryObjectId) => void;
 }) {
   const [section, setSection] = useState<'messages' | 'evidence'>('messages');
-  const [object, setObject] = useState<StoryObjectId>('tag');
+  const [object, setObject] = useState<StoryObjectId>(
+    state.objects[0] ?? 'tag',
+  );
+  const inspected = useRef(new Set<StoryObjectId>());
+  useEffect(() => {
+    if (
+      onInspect &&
+      section === 'evidence' &&
+      state.objects.includes(object) &&
+      !state.evidenceInspected?.includes(object) &&
+      !inspected.current.has(object)
+    ) {
+      inspected.current.add(object);
+      onInspect(object);
+    }
+  }, [section, object, state.objects, state.evidenceInspected, onInspect]);
   return (
     <div className="phone-body">
       <div className="phone-tabs">
@@ -55,6 +74,14 @@ export function Phone({
               {STORY_OBJECTS[object].lines.map((line) => (
                 <p key={line}>{line}</p>
               ))}
+              {state.read.includes(
+                EVIDENCE_ANNOTATIONS[object].requiresRead,
+              ) && (
+                <aside className="evidence-annotation">
+                  <small>TONY&apos;S NOTE</small>
+                  <p>{EVIDENCE_ANNOTATIONS[object].text}</p>
+                </aside>
+              )}
               <footer>RETAINED AT WORKBENCH · NOT FOR SALE</footer>
             </article>
           ) : (
@@ -91,11 +118,12 @@ function History({
         id: `${id}:${i}`,
         text: line.text,
         speaker: line.speaker,
-        label: i
-          ? ''
-          : id === 'epilogue'
-            ? 'SOME WEEKS LATER · UNKNOWN NUMBER'
-            : `CHAPTER ${event.chapter} · ${line.speaker === 'bank' ? 'BELLWETHER SECURITY' : 'TONY'}`,
+        label:
+          i && event.messages[i - 1].speaker === line.speaker
+            ? ''
+            : id === 'epilogue'
+              ? 'SOME WEEKS LATER · UNKNOWN NUMBER'
+              : `CHAPTER ${event.chapter} · ${storySpeaker(line.speaker).name}${line.speaker === 'mercer' ? ' · BELLWETHER NATIONAL' : ''}`,
       }));
     }),
   ]);

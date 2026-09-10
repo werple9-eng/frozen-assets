@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Spring } from './motion';
+import { sharedResource, SceneResources } from './scene-resources';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
   STORY_OBJECTS,
@@ -30,6 +31,7 @@ const lamp = new THREE.MeshStandardMaterial({
   emissive: 0xc5b989,
   emissiveIntensity: 1,
 });
+for (const material of [metal, grip, black, brass, red, lamp]) sharedResource(material);
 function box(
   w: number,
   h: number,
@@ -116,15 +118,22 @@ export function toolMesh(id: ToolId) {
         g.add(ring);
       }
   } else if (id === 'pick' || id === 'heavy') {
-    const large = id === 'heavy' ? 1.15 : 1;
+    const heavy = id === 'heavy';
+    const large = heavy ? 1.27 : 1;
     // Curved tapered forged head, with a narrow point and a real adze heel.
     const curve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(0, 0.02, 0),
-      new THREE.Vector3(0.24, 0.14, 0.04),
-      new THREE.Vector3(0.55, 0.24, 0.12),
-      new THREE.Vector3(0.79, 0.25, 0.15),
+      new THREE.Vector3(heavy ? 0.28 : 0.24, heavy ? 0.2 : 0.14, 0.04),
+      new THREE.Vector3(heavy ? 0.63 : 0.55, heavy ? 0.32 : 0.24, 0.12),
+      new THREE.Vector3(heavy ? 0.89 : 0.79, heavy ? 0.32 : 0.25, 0.15),
     ]);
-    const head = new THREE.TubeGeometry(curve, 18, 0.075 * large, 8, false);
+    const head = new THREE.TubeGeometry(
+      curve,
+      18,
+      heavy ? 0.135 : 0.055,
+      8,
+      false,
+    );
     const position = head.getAttribute('position');
     for (let i = 0; i < position.count; i++) {
       const along = Math.floor(i / 9) / 18,
@@ -141,18 +150,64 @@ export function toolMesh(id: ToolId) {
     const h = new THREE.Mesh(head, metal);
     h.castShadow = true;
     g.add(h);
-    bevel(0.29, 0.17, 0.25, metal, 0.79, 0.24, 0.17);
-    bevel(0.32, 0.11, 0.22, metal, 1.04, 0.22, 0.17);
+    bevel(
+      heavy ? 0.47 : 0.23,
+      heavy ? 0.29 : 0.14,
+      heavy ? 0.36 : 0.18,
+      metal,
+      heavy ? 0.9 : 0.79,
+      heavy ? 0.3 : 0.24,
+      0.17,
+    );
+    if (heavy) {
+      // Broad rectangular adze, flaring away from the collar: a different
+      // forged silhouette, rather than a scaled lean ice pick.
+      const wedge = new THREE.BufferGeometry();
+      const v = [
+        1.02, 0.37, 0.04, 1.02, 0.2, 0.04, 1.48, 0.23, -0.11, 1.48, 0.29, -0.11,
+        1.02, 0.37, 0.3, 1.02, 0.2, 0.3, 1.48, 0.23, 0.44, 1.48, 0.29, 0.44,
+      ];
+      wedge.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+      wedge.setIndex([
+        0, 1, 2, 0, 2, 3, 4, 7, 6, 4, 6, 5, 0, 3, 7, 0, 7, 4, 1, 5, 6, 1, 6, 2,
+        2, 6, 7, 2, 7, 3, 0, 4, 5, 0, 5, 1,
+      ]);
+      wedge.computeVertexNormals();
+      const heel = new THREE.Mesh(wedge, metal);
+      heel.castShadow = true;
+      g.add(heel);
+      bevel(0.35, 0.39, 0.39, black, 0.8, 0.29, 0.48);
+      for (const z of [0.35, 0.61])
+        bevel(0.38, 0.035, 0.045, metal, 0.8, 0.49, z);
+      for (let i = 0; i < 3; i++)
+        bevel(0.07, 0.008, 0.13, brass, 0.77 + i * 0.07, 0.451, 0.13);
+    } else bevel(0.23, 0.07, 0.19, metal, 0.99, 0.22, 0.17);
     shaft(
       new THREE.Vector3(0.8, 0.22, 0.24),
       new THREE.Vector3(0.8, 0.24, 1.92 * large),
-      0.065 * large,
+      heavy ? 0.11 : 0.055,
       grip,
     );
     bevel(0.21, 0.24, 0.24, brass, 0.8, 0.25, 0.36);
-    bevel(0.22, 0.23, 0.65, black, 0.8, 0.25, 1.6 * large);
+    bevel(
+      heavy ? 0.3 : 0.18,
+      heavy ? 0.3 : 0.19,
+      heavy ? 0.83 : 0.58,
+      black,
+      0.8,
+      0.25,
+      1.6 * large,
+    );
     for (let i = 0; i < 8; i++)
-      bevel(0.226, 0.025, 0.038, grip, 0.8, 0.37, 1.32 * large + i * 0.07);
+      bevel(
+        heavy ? 0.306 : 0.186,
+        0.025,
+        0.038,
+        grip,
+        0.8,
+        heavy ? 0.41 : 0.354,
+        1.32 * large + i * 0.07,
+      );
     bevel(0.24, 0.25, 0.09, metal, 0.8, 0.25, 1.95 * large);
   } else {
     const length = id === 'sledge' ? 2.3 : 1.6;
@@ -166,6 +221,33 @@ export function toolMesh(id: ToolId) {
         0.06,
         metal,
       );
+      if (id === 'breaker') {
+        const bit = g.children.at(-1)!;
+        bit.name = 'working-bit';
+        bit.userData.restZ = bit.position.z;
+        bevel(0.24, 0.25, 0.15, metal, 0, 0.25, 0.4);
+      }
+      if (id === 'thermal') {
+        const hose = new THREE.Mesh(
+          new THREE.TubeGeometry(
+            new THREE.CatmullRomCurve3([
+              new THREE.Vector3(0.23, 0.22, 1),
+              new THREE.Vector3(0.46, 0.08, 1.38),
+              new THREE.Vector3(0.4, 0.06, 1.84),
+              new THREE.Vector3(0.18, 0.09, 2.12),
+            ]),
+            18,
+            0.052,
+            8,
+            false,
+          ),
+          black,
+        );
+        hose.name = 'thermal-hose';
+        hose.castShadow = true;
+        g.add(hose);
+        bevel(0.16, 0.18, 0.17, brass, 0.23, 0.22, 1.04);
+      }
       bevel(1, 0.12, 0.17, black, 0, 0.5, 0.88);
     }
     bevel(0.23, 0.25, 0.58, black, 0, 0.24, length * 0.83);
@@ -174,6 +256,7 @@ export function toolMesh(id: ToolId) {
   return g;
 }
 export class Workshop {
+  resources = new SceneResources();
   group = new THREE.Group();
   phone = new THREE.Group();
   handset = new THREE.Group();
@@ -433,13 +516,11 @@ export class Workshop {
     if (key !== this.signature) {
       this.signature = key;
       for (const group of [this.rack, this.display]) {
-        group.traverse((o) => {
-          if (o instanceof THREE.Mesh) o.geometry.dispose();
-        });
+        this.resources.disposeGraph(group);
         group.clear();
       }
       this.rack.add(box(8, 0.2, 1.4, grip, 5 * span, 0.1, -7 * span));
-      for (const [i, id] of tools.filter(t=>t!=='grip').entries()) {
+      for (const [i, id] of tools.filter((t) => t !== 'grip').entries()) {
         const t = toolMesh(id);
         t.position.set(2 * span + i * 0.9, 0.2, -7 * span);
         t.rotation.y = 0.15;
@@ -545,9 +626,7 @@ export class Workshop {
       (this.current !== selected && this.toolSwap.value < 0.035)
     ) {
       this.current = selected;
-      this.hand.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.geometry.dispose();
-      });
+      this.resources.disposeGraph(this.hand);
       this.hand.clear();
       this.hand.add(toolMesh(selected));
       this.toolSwap.set(reduced ? 1 : 0.025);
@@ -560,14 +639,11 @@ export class Workshop {
     });
   }
   dispose() {
-    this.handsetMaterial.dispose();
-    this.labels.forEach((t) => t.dispose());
-    this.group.traverse((o) => {
-      if (o instanceof THREE.Mesh) o.geometry.dispose();
-    });
-    this.hand.traverse((o) => {
-      if (o instanceof THREE.Mesh) o.geometry.dispose();
-    });
+    this.resources.disposeGraph(this.group);
+    this.resources.disposeGraph(this.hand);
+    this.labels.forEach((t) => this.resources.dispose(t));
+    this.labels.length = 0;
+    this.arrivals.clear();
   }
 }
 export function objectCaption(id: StoryObjectId) {

@@ -184,7 +184,8 @@ export function validateTutorial(raw: unknown): TutorialSave | undefined {
   return structuredClone(t);
 }
 
-// Same grid topology and mesher; only this authored opening uses exposure release.
+// Same grid topology, mesher and physical contact release as the main game.
+// The legacy profile flag selects a snug carve instead of a spacious air pocket.
 // Linear footprint ratios are 45% and 68% of Chapter 1's first normal parcel.
 export function tutorialField(
   block: 0 | 1 | 2,

@@ -1027,6 +1027,9 @@
 .radial-world .tree-map {
   pointer-events: none;
 }
+.radial-world .tree-viewport {
+  clip-path: inset(150px 0 88px);
+}
 .upgrade-world.radial-world .map-node,
 .upgrade-world.radial-world .map-node.milestone {
   width: 82px !important;
@@ -1090,30 +1093,6 @@
 }
 .node-question {
   font: 700 23px var(--body-type);
-}
-.node-glyph {
-  position: relative;
-  width: 45px;
-  height: 45px;
-  display: block;
-}
-.node-glyph > .tool-glyph {
-  width: 35px;
-  height: 35px;
-  position: absolute;
-  left: 0;
-  top: 2px;
-  stroke-width: 2.5;
-}
-.node-mark {
-  position: absolute;
-  right: -1px;
-  bottom: 1px;
-  width: 18px;
-  height: 18px;
-  background: #202822;
-  border-radius: 50%;
-  padding: 2px;
 }
 .radial-world .map-tool {
   width: 84px !important;
@@ -1183,6 +1162,7 @@
   color: #c4b381;
 }
 .radial-world .node-tooltip .tree-buy {
+  width: calc(100% + 34px) !important;
   margin: 4px -17px -17px !important;
   padding: 11px 13px !important;
   border: 0 !important;
@@ -1191,6 +1171,16 @@
   background: #31372a !important;
   min-height: 44px !important;
   font: 600 18px/1.2 var(--body-type) !important;
+}
+.radial-world .node-tooltip .tree-buy > .tactile-face {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  font: inherit !important;
+}
+.radial-world .node-tooltip .tree-buy > .tactile-face::before,
+.radial-world .node-tooltip .tree-buy > .tactile-face::after {
+  display: none !important;
 }
 .skill-screen .screen-footer .bench-return {
   width: 350px !important;
@@ -1376,10 +1366,6 @@
   width: 55px !important;
   flex: 0 0 55px !important;
 }
-.radial-world .map-node .node-glyph {
-  width: 45px !important;
-  flex: none !important;
-}
 .radial-world .map-node .node-question {
   width: auto !important;
 }
@@ -1413,4 +1399,683 @@
 }
 .tool-reveal-actions button > .tactile-face {
   font: inherit;
+}
+
+/* The hit target stays fixed. Arrival, interaction and engraved moving parts
+   each own a transform, so interrupting one cannot freeze another. */
+.radial-world .engraved-node {
+  touch-action: none;
+  cursor: pointer;
+}
+.engraved-node .node-entry,
+.engraved-node .node-arrival,
+.engraved-node .node-spring {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+.engraved-node .node-entry {
+  animation: engraving-enter 240ms var(--entry-delay) both;
+}
+.engraved-node .node-spring {
+  transition: scale 340ms cubic-bezier(0.18, 1.65, 0.32, 1);
+}
+.engraved-node:is(:hover, :focus-visible) .node-spring {
+  scale: 1.1;
+}
+.engraved-node:active .node-spring {
+  scale: 0.9;
+  transition-duration: 65ms;
+}
+.tree-viewport[data-dragging] .engraved-node .node-spring {
+  scale: 1;
+}
+.radial-world .engraved-node .node-face {
+  position: relative;
+  isolation: isolate;
+  --engraving-ink: #171e1b;
+}
+.radial-world .engraved-node.purchased .node-face {
+  --engraving-ink: color-mix(in srgb, var(--branch) 45%, #18211d);
+}
+.radial-world .engraved-node.milestone .node-face {
+  width: 52px !important;
+  flex-basis: 52px !important;
+  height: 52px;
+}
+.radial-world .engraved-node.milestone .upgrade-engraving {
+  rotate: -45deg;
+  width: 38px;
+  height: 38px;
+}
+.upgrade-engraving {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  overflow: visible;
+}
+.engraving-cut {
+  stroke: var(--engraving-ink);
+  stroke-width: 1.45;
+}
+.engraving-ground {
+  opacity: 0.72;
+  stroke-width: 1.55;
+}
+.engraving-action {
+  opacity: 0.85;
+  stroke-width: 1.7;
+}
+.engraving-moving {
+  transform-origin: 20px 25px;
+}
+.motion-swing .engraving-moving {
+  transform-origin: 15px 33px;
+}
+.motion-spin .engraving-moving {
+  transform-origin: 20px 20px;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting)
+  .motion-strike
+  .engraving-moving {
+  animation: engraving-strike 520ms both;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting)
+  .motion-swing
+  .engraving-moving {
+  animation: engraving-swing 620ms both;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting)
+  .motion-rebound
+  .engraving-moving {
+  animation: engraving-rebound 580ms both;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting)
+  .motion-spin
+  .engraving-moving {
+  animation: engraving-spin 700ms both;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting)
+  .motion-peel
+  .engraving-moving {
+  animation: engraving-peel 650ms both;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting)
+  .motion-heat
+  .engraving-moving {
+  animation: engraving-heat 750ms both;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting) .engraving-action {
+  animation: engraving-action 700ms both;
+}
+.engraved-node:is(:hover, :focus-visible, .fitting)
+  .motion-pulse
+  .engraving-action {
+  transform-origin: 20px 25px;
+  animation: engraving-pulse 650ms both;
+}
+.radial-world .map-current.inspected {
+  stroke: #e7d29b;
+  opacity: 0.85;
+  transition: stroke 160ms;
+}
+.radial-world .map-paths > g {
+  animation: frontier-path 200ms 35ms both;
+}
+.radial-world .engraved-node.available.affordable .node-face {
+  animation: waiting-engraving 4s ease-in-out infinite;
+}
+@keyframes waiting-engraving {
+  0%,
+  100% {
+    box-shadow: 0 0 6px #bb9c341c;
+  }
+  50% {
+    box-shadow: 0 0 10px #bb9c3435;
+  }
+}
+.radial-world .map-current.purchase-travel {
+  stroke-dasharray: 1;
+  animation: purchase-current var(--path-duration) var(--path-delay)
+    cubic-bezier(0.3, 0, 0.25, 1) both;
+}
+.radial-world .map-current.path-revealed {
+  animation: frontier-path 480ms 100ms both;
+}
+.engraved-node.fitting .node-arrival {
+  animation: fitting-pop 520ms both;
+}
+.engraved-node.fitting .node-face {
+  animation: fitting-color 440ms both;
+}
+.engraved-node.milestone.fitting .node-arrival {
+  animation: fitting-major 600ms both;
+}
+.engraved-node.child-revealed .node-arrival {
+  animation: branch-bud 620ms both;
+}
+.engraved-node.tease-revealed .node-arrival {
+  animation: engraving-enter 460ms 120ms both;
+}
+.engraved-node.child-revealed .upgrade-engraving {
+  animation: engraving-enter 360ms 100ms both;
+}
+.major-growing:before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 50%, #b9a36612, transparent 55%);
+  animation: workshop-response 700ms both;
+}
+@keyframes engraving-enter {
+  from {
+    opacity: 0;
+    scale: 0.8;
+    translate: 0 5px;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: 0 0;
+  }
+}
+@keyframes fitting-pop {
+  0% {
+    scale: 0.9;
+  }
+  32% {
+    scale: 1.13;
+  }
+  61% {
+    scale: 0.975;
+  }
+  82% {
+    scale: 1.012;
+  }
+  100% {
+    scale: 1;
+  }
+}
+@keyframes fitting-major {
+  0% {
+    scale: 0.88;
+  }
+  32% {
+    scale: 1.14;
+  }
+  60% {
+    scale: 0.96;
+  }
+  82% {
+    scale: 1.018;
+  }
+  100% {
+    scale: 1;
+  }
+}
+@keyframes fitting-color {
+  0% {
+    background: #171e1b;
+  }
+  55% {
+    background: color-mix(in srgb, var(--branch) 65%, #18211d);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--branch) 28%, transparent);
+  }
+  100% {
+    background: color-mix(in srgb, var(--branch) 45%, #18211d);
+  }
+}
+@keyframes branch-bud {
+  0% {
+    opacity: 0.1;
+    scale: 0.7;
+  }
+  48% {
+    opacity: 1;
+    scale: 1.105;
+  }
+  70% {
+    scale: 0.98;
+  }
+  87% {
+    scale: 1.01;
+  }
+  100% {
+    scale: 1;
+  }
+}
+@keyframes purchase-current {
+  from {
+    stroke-dashoffset: 1;
+    stroke: #f0dda4;
+  }
+  to {
+    stroke-dashoffset: 0;
+    stroke: var(--branch);
+  }
+}
+@keyframes frontier-path {
+  from {
+    opacity: 0.08;
+  }
+}
+@keyframes workshop-response {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+@keyframes engraving-strike {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  24% {
+    transform: translateY(-3px);
+  }
+  42% {
+    transform: translateY(2px);
+  }
+  65% {
+    transform: translateY(-1px);
+  }
+}
+@keyframes engraving-swing {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  24% {
+    transform: rotate(14deg);
+  }
+  45% {
+    transform: rotate(-7deg);
+  }
+  70% {
+    transform: rotate(2deg);
+  }
+}
+@keyframes engraving-rebound {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0);
+  }
+  30% {
+    transform: translate(1px, -3px) rotate(5deg);
+  }
+  65% {
+    transform: translate(-0.5px, 1px) rotate(-2deg);
+  }
+}
+@keyframes engraving-spin {
+  from {
+    transform: rotate(-55deg);
+  }
+  to {
+    transform: rotate(0);
+  }
+}
+@keyframes engraving-peel {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0);
+  }
+  35% {
+    transform: translate(2px, -3px) rotate(7deg);
+  }
+  75% {
+    transform: translate(-0.5px, 0.5px) rotate(-2deg);
+  }
+}
+@keyframes engraving-heat {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  35% {
+    transform: scale(0.93, 1.1);
+  }
+  65% {
+    transform: scale(1.035, 0.97);
+  }
+}
+@keyframes engraving-action {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  25% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes engraving-pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  30% {
+    opacity: 0.2;
+    transform: scale(0.85);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+.reduced-motion .engraved-node *,
+.reduced-motion .radial-world .map-current,
+.reduced-motion .radial-world .map-paths > g,
+.reduced-motion .major-growing:before {
+  animation: none !important;
+  transition: none !important;
+}
+.reduced-motion .engraved-node .node-spring {
+  scale: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .engraved-node *,
+  .radial-world .map-current,
+  .radial-world .map-paths > g,
+  .major-growing:before {
+    animation: none !important;
+    transition: none !important;
+  }
+  .engraved-node .node-spring {
+    scale: 1;
+  }
+}
+/* The lettering owns a reserved envelope; the hit box never changes on hover. */
+.tactile .kinetic-word {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.18;
+}
+.tactile .button-word {
+  display: inline-block;
+  white-space: nowrap;
+  padding-block: 0.12em;
+}
+.pause-menu .save-back {
+  min-height: 60px;
+  padding: 12px 24px;
+  width: 100%;
+}
+.pause-menu .save-back > .tactile-face {
+  justify-content: center;
+  min-width: 0;
+  height: auto;
+}
+.radial-world .node-tooltip {
+  animation: inspect-in 180ms ease-out both;
+  transform-origin: 50% 50%;
+}
+.radial-world .node-tooltip.closing {
+  animation: inspect-out 110ms ease-in both;
+  /* The same 110ms timer bridges the gap from a node to its Buy panel.
+     Entering the panel must still cancel that timer during the exit fade. */
+  pointer-events: auto;
+}
+@keyframes inspect-in {
+  from {
+    opacity: 0;
+    scale: 0.97;
+    translate: 0 4px;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: 0 0;
+  }
+}
+@keyframes inspect-out {
+  to {
+    opacity: 0;
+    scale: 0.97;
+    translate: 0 3px;
+  }
+}
+.radial-world .map-node.hidden,
+.radial-world .map-paths .hidden {
+  display: none;
+}
+.reduced-motion .node-tooltip {
+  animation-duration: 1ms !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .radial-world .node-tooltip {
+    animation-duration: 1ms;
+  }
+}
+.delivery-complete {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  display: grid;
+  place-items: center;
+  background: #0c1715d9;
+  backdrop-filter: blur(9px);
+  overflow-y: auto;
+  padding: 24px;
+  animation: delivery-dim 200ms ease-out 150ms both;
+  outline: none;
+}
+.delivery-board {
+  width: min(660px, 94vw);
+  color: #f5e8b9;
+  text-align: center;
+}
+.delivery-claim {
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font: 600 12px var(--bench-type);
+  color: #b3b99f;
+  margin: 0 0 12px;
+}
+.delivery-board h2 {
+  font: 900 clamp(48px, 8vh, 94px)/0.86 var(--display-type);
+  letter-spacing: -0.025em;
+  margin: 0 0 26px;
+}
+.delivery-word {
+  display: block;
+}
+.delivery-word > span {
+  display: inline-block;
+  animation: delivery-letter 600ms var(--motion-spring) var(--letter-time) both;
+  transform-origin: 50% 80%;
+}
+.delivery-word:last-child {
+  color: #d0b271;
+}
+.delivery-ledger {
+  text-align: left;
+  padding: 5px 26px 18px;
+  border-top: 1px solid #a69b6240;
+  border-bottom: 1px solid #a69b6240;
+}
+.delivery-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font: 500 22px var(--bench-type);
+  padding: 8px 0;
+  animation: delivery-row 380ms var(--motion-spring) var(--row-time) both;
+}
+.delivery-row strong {
+  font: 900 30px var(--display-type);
+}
+.delivery-row.fee {
+  color: #c58a77;
+}
+.delivery-row.net {
+  font-size: 28px;
+  color: #fff1c2;
+  padding-bottom: 14px;
+}
+.delivery-row.net strong {
+  font-size: 48px;
+}
+.delivery-details {
+  display: grid;
+  gap: 7px;
+  animation: delivery-row 400ms ease-out 1100ms both;
+  font: 500 16px var(--bench-type);
+}
+.delivery-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+.delivery-details span {
+  color: #a5b4a5;
+}
+.delivery-details strong {
+  text-align: right;
+}
+.delivery-details small {
+  color: #cabb8c;
+  margin-left: 8px;
+}
+.delivery-next {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 19px 0;
+  font: 600 16px var(--bench-type);
+  animation: delivery-row 380ms ease-out 1420ms both;
+}
+.delivery-next small {
+  width: 100%;
+  color: #9bae9c;
+}
+.delivery-next strong {
+  color: #e6c975;
+}
+.delivery-continue {
+  min-width: 300px;
+  min-height: 64px;
+  padding: 12px 28px;
+  background: #b8a46b;
+  color: #18261e;
+  font: 900 30px var(--display-type);
+  box-shadow: 0 5px 0 #514934;
+  animation: delivery-row 400ms var(--motion-spring) 1650ms both;
+}
+.delivery-continue > .tactile-face {
+  justify-content: space-between;
+  gap: 28px;
+}
+.delivery-continue kbd {
+  font: 500 18px var(--bench-type);
+  opacity: 0.6;
+}
+.delivery-complete.settled * {
+  animation-delay: 0ms !important;
+  animation-duration: 1ms !important;
+}
+@keyframes delivery-dim {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes delivery-letter {
+  from {
+    opacity: 0;
+    transform: translateY(-22px) scale(0.7, 1.28) rotate(-3deg);
+  }
+  48% {
+    opacity: 1;
+    transform: translateY(3px) scale(1.09, 0.91) rotate(1deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes delivery-row {
+  from {
+    opacity: 0;
+    transform: translateY(13px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.reduced-motion .delivery-complete,
+.reduced-motion .delivery-complete * {
+  animation-duration: 1ms !important;
+  animation-delay: 0ms !important;
+}
+@media (max-height: 750px) {
+  .delivery-board h2 {
+    font-size: 60px;
+    margin-bottom: 18px;
+  }
+  .delivery-complete {
+    padding: 18px;
+  }
+  .delivery-next {
+    margin: 14px 0;
+  }
+  .delivery-row {
+    padding: 5px 0;
+  }
+  .delivery-details {
+    gap: 4px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .delivery-complete,
+  .delivery-complete * {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+  }
+}
+.radial-world .map-node[hidden],
+.radial-world .map-paths .hidden {
+  display: none !important;
+}
+.delivery-number {
+  position: relative;
+  display: inline-block;
+}
+.delivery-number .number-reservation {
+  visibility: hidden;
+}
+.delivery-number .number-roll {
+  position: absolute;
+  right: 0;
+  top: 0;
+  white-space: nowrap;
+}
+@media (max-height: 750px) {
+  .delivery-board h2 {
+    font-size: 76px;
+  }
+}
+.delivery-complete {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  box-sizing: border-box;
 }

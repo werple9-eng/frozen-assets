@@ -63,7 +63,7 @@ export class StrikeCycle {
 const smooth = (a: number, b: number, t: number) =>
   a + (b - a) * t * t * (3 - 2 * t);
 // Tip-space pose, authored in seconds. Contact is exactly at the 210ms key.
-export function strikePose(progress: number, immediate = false) {
+export function strikePose(progress: number, immediate = false, tool?: string) {
   if (immediate) {
     const t = Math.max(0, Math.min(1, progress));
     return {
@@ -74,10 +74,10 @@ export function strikePose(progress: number, immediate = false) {
   const t = Math.max(0, Math.min(1, progress)) * 0.525;
   const keys = [
     [0, 0.08, 0.12],
-    [0.08, 0.68, 0.74],
+    [0.07, 0.68, 0.74],
     [0.21, 0, 0],
-    [0.3, -0.018, -0.07],
-    [0.43, 0.15, 0.18],
+    [0.275, -0.024, -0.085],
+    [0.39, 0.17, 0.2],
     [0.525, 0.08, 0.12],
   ];
   const i = Math.max(
@@ -89,5 +89,26 @@ export function strikePose(progress: number, immediate = false) {
   const a = keys[i],
     b = keys[i + 1],
     u = Math.max(0, Math.min(1, (t - a[0]) / (b[0] - a[0])));
-  return { lift: smooth(a[1], b[1], u), angle: smooth(a[2], b[2], u) };
+  const mass =
+    tool === 'heavy'
+      ? 1.22
+      : tool === 'sledge'
+        ? 1.5
+        : tool === 'breaker'
+          ? 0.15
+          : 1;
+  // The downward arc accelerates into contact; recovery eases and settles.
+  const arc = i === 1 ? u * u : u;
+  return {
+    lift: smooth(a[1], b[1], arc) * mass,
+    angle:
+      smooth(a[2], b[2], arc) *
+      (tool === 'heavy'
+        ? 1.12
+        : tool === 'sledge'
+          ? 1.22
+          : tool === 'breaker'
+            ? 0.1
+            : 1),
+  };
 }

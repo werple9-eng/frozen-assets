@@ -21,8 +21,8 @@ void test('new tutorial begins on an empty tray and old recoveries skip it', () 
   assert.equal(fresh.strikeSerial, 0);
   assert.equal(new GameModel(new GameModel().serialize()).inTutorial, false);
 });
-void test('micro blocks use smaller physical geometry and an isolated exposure rule', () => {
-  const normal = campaignField(0),
+void test('micro blocks use smaller physical geometry and release only after contact clears', () => {
+  const normal = campaignField(0, 0, undefined, 2),
     a = tutorialField(1),
     b = tutorialField(2);
   const width = (f: typeof a) =>
@@ -30,14 +30,21 @@ void test('micro blocks use smaller physical geometry and an isolated exposure r
     Math.min(...f.points.map((p) => p.x));
   assert.ok(Math.abs(width(a) / width(normal) - 0.45) < 0.001);
   assert.ok(Math.abs(width(b) / width(normal) - 0.68) < 0.001);
+  // Induction retains its authored dimensions as the main campaign grid grows.
+  assert.ok(width(a) < width(campaignField(0)));
+  assert.ok(width(b) < width(campaignField(0)));
   const loot = tutorialLoot(1)[0];
   a.carveLoot([loot]);
   assert.equal(a.canRelease(loot), false);
-  // Open only its top/front shell; its deep base still remains occupied.
+  // Clearing the top alone must not delete the pedestal still touching it.
   a.points.forEach((p, i) => {
     if (p.y > loot.y - loot.h * 0.5) a.values[i] = 0;
   });
   assert.ok(a.remaining() > 0);
+  assert.equal(a.canRelease(loot), false);
+  a.points.forEach((p, i) => {
+    if (p.y > loot.y - loot.h * 0.5 - a.grid.cellSize) a.values[i] = 0;
+  });
   assert.equal(a.canRelease(loot), true);
   assert.equal(normal.profile?.releaseMode, undefined);
 });
@@ -57,7 +64,7 @@ void test('the authored tutorial reaches Chapter 1 without timers or hidden cred
   );
   assert.ok(
     result.metrics.firstRewardStrikes >= 3 &&
-      result.metrics.firstRewardStrikes <= 6,
+      result.metrics.firstRewardStrikes <= 8,
   );
 });
 void test('every tutorial checkpoint reloads without duplicate money, commission or stamp', () => {

@@ -1,5 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readdirSync } from 'node:fs';
+const testFiles = readdirSync('tests')
+  .filter((name) => name.endsWith('.test.ts'))
+  .sort();
+const moduleTests = readdirSync('tests')
+  .filter((name) => name.endsWith('.test.mjs'))
+  .sort();
 const compile = spawnSync(
   process.execPath,
   [
@@ -14,12 +20,7 @@ const compile = spawnSync(
     '--skipLibCheck',
     '--outDir',
     '.test-build',
-    'tests/game.test.ts',
-    'tests/campaign.test.ts',
-    'tests/motion.test.ts',
-    'tests/tutorial.test.ts',
-    'tests/landline.test.ts',
-    'tests/polish.test.ts',
+    ...testFiles.map((name) => `tests/${name}`),
   ],
   { stdio: 'inherit' },
 );
@@ -30,12 +31,10 @@ const result = spawnSync(
   process.execPath,
   [
     '--test',
-    '.test-build/tests/game.test.js',
-    '.test-build/tests/campaign.test.js',
-    '.test-build/tests/motion.test.js',
-    '.test-build/tests/tutorial.test.js',
-    '.test-build/tests/landline.test.js',
-    '.test-build/tests/polish.test.js',
+    ...testFiles.map(
+      (name) => `.test-build/tests/${name.replace(/\.ts$/, '.js')}`,
+    ),
+    ...moduleTests.map((name) => `tests/${name}`),
   ],
   { stdio: 'inherit' },
 );

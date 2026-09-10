@@ -7,7 +7,14 @@ import { ALL_TOOL_NODES } from './tool-trees';
 // scene, and restores the checkpoint even when an assertion or animation fails.
 export async function polishAudit(
   s: GameScene,
-  scenario: 'calls' | 'map' | 'tools' | 'camera' | 'phone' | 'tool-pages',
+  scenario:
+    | 'calls'
+    | 'map'
+    | 'tools'
+    | 'camera'
+    | 'phone'
+    | 'tool-pages'
+    | 'growth',
 ) {
   if (new URLSearchParams(location.search).get('qa') !== '1')
     throw Error('Practice bench required');
@@ -43,7 +50,91 @@ export async function polishAudit(
     m.pause(false);
     m.emit();
     await wait(850);
-    if (scenario === 'tool-pages') {
+    if (scenario === 'growth') {
+      m.campaign!.unlock('pick');
+      m.campaign!.state.pending = [];
+      m.selectTool('pick');
+      m.money = m.earned = 10000;
+      m.emit();
+      key('u');
+      await wait(600);
+      const element = (id: string) =>
+        document.querySelector<HTMLButtonElement>(`[data-skill="${id}"]`)!;
+      const samples: {
+        ms: number;
+        child: string;
+        path: number;
+        scale: string;
+      }[] = [];
+      const before = m.money,
+        start = performance.now();
+      click('[data-skill="IP-P1"]');
+      await wait(1000, () => {
+        const path = document.querySelector('.purchase-travel');
+        samples.push({
+          ms: Math.round(performance.now() - start),
+          child: element('IP-P2').className,
+          path: path ? parseFloat(getComputedStyle(path).strokeDashoffset) : -1,
+          scale: getComputedStyle(
+            element('IP-P2').querySelector('.node-arrival')!,
+          ).scale,
+        });
+      });
+      result.delayedChild =
+        samples.some((p) => p.ms < 300 && p.child.includes('locked')) &&
+        samples.some((p) => p.ms > 380 && p.child.includes('child-revealed'));
+      result.travelingPath = samples.some(
+        (p) => p.path > 0.05 && p.path < 0.95,
+      );
+      result.childSpring =
+        new Set(
+          samples
+            .filter((p) => p.child.includes('child-revealed'))
+            .map((p) => p.scale),
+        ).size > 3;
+      result.exactCharge =
+        before - m.money === ALL_TOOL_NODES.find((n) => n.id === 'IP-P1')!.cost;
+      result.samples = samples.filter((_, i) => i % 4 === 0);
+      // Rapid purchases on independent branches must complete both timelines.
+      click('[data-skill="IP-S1"]');
+      await wait(160);
+      click('[data-skill="IP-C1"]');
+      await wait(1250);
+      result.concurrentDetails = {
+        nodes: [...m.nodes.pick],
+        active: [...document.querySelectorAll('.fitting,.child-revealed')].map(
+          (e) => e.getAttribute('data-skill'),
+        ),
+      };
+      result.concurrentGrowth =
+        m.nodes.pick.includes('IP-S1') &&
+        m.nodes.pick.includes('IP-C1') &&
+        !document.querySelector('.fitting,.child-revealed');
+      // One-shot acquisition effects must never replay on reopening.
+      await close();
+      key('u');
+      await wait(650);
+      result.noReplay = !document.querySelector(
+        '.purchase-travel,.fitting,.child-revealed',
+      );
+      await close();
+      m.setSetting('reducedMotion', true);
+      key('u');
+      await wait(500);
+      click('[data-skill="IP-T1"]');
+      await wait(200);
+      result.reducedMotion =
+        m.nodes.pick.includes('IP-T1') &&
+        !document.querySelector('.purchase-travel,.fitting,.child-revealed');
+      result.pass =
+        result.delayedChild &&
+        result.travelingPath &&
+        result.childSpring &&
+        result.exactCharge &&
+        result.concurrentGrowth &&
+        result.noReplay &&
+        result.reducedMotion;
+    } else if (scenario === 'tool-pages') {
       m.campaign!.unlock('grip');
       m.campaign!.unlock('pick');
       m.campaign!.state.pending = [];

@@ -1,3 +1,12 @@
+import { overhaulUIAudit } from './overhaul-qa';
+import { renderedReleaseStress } from './release-qa';
+import {
+  createMajorQA,
+  type VariableFieldFixture,
+  type MajorFieldProfile,
+  type MajorDeliveryFixture,
+  type MajorConditionFixture,
+} from './major-qa';
 import { TUNE } from './tuning';
 import type { GameScene } from './scene';
 import { GameModel, type Upgrade } from './model';
@@ -23,6 +32,28 @@ import {
   type MajorTool,
 } from './tool-trees';
 export function registerGameTools(s: GameScene, read: () => unknown) {
+  // A same-origin iframe provides real CSS viewport sizes for local layout QA.
+  // Embedded frames do not receive the browser's WebMCP registry.
+  if (
+    ['localhost', '127.0.0.1'].includes(location.hostname) &&
+    new URLSearchParams(location.search).get('qa') === '1' &&
+    new URLSearchParams(location.search).get('review') === 'labels' &&
+    window.parent !== window
+  ) {
+    const timer = setTimeout(() => {
+      void overhaulUIAudit(s)
+        .then((result) =>
+          window.parent.postMessage({ frozenReview: result }, location.origin),
+        )
+        .catch((error) =>
+          window.parent.postMessage(
+            { frozenReview: { error: String(error) } },
+            location.origin,
+          ),
+        );
+    }, 1500);
+    return () => clearTimeout(timer);
+  }
   const registry = (
     document as Document & {
       modelContext?: {
@@ -199,6 +230,161 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
     s.model instanceof GameModel
   ) {
     const m = s.model;
+    const majorQA = createMajorQA(s, life.signal);
+    let releaseStress: { status: string; result?: unknown; error?: string } = {
+      status: 'not started',
+    };
+    add(
+      'test_release_stress',
+      'Isolated QA only: start real-mesh release stress across all campaign phases and ten endless contracts, with 18 physical openings per cargo item. Synthetic geometry fixtures, not a playthrough. Restores the practice save and leaves it paused. Poll inspect_release_stress.',
+      empty,
+      () => {
+        if (releaseStress.status === 'running') return releaseStress;
+        releaseStress = { status: 'running' };
+        void renderedReleaseStress(s, life.signal)
+          .then((result) => {
+            releaseStress = { status: 'complete', result };
+          })
+          .catch((error) => {
+            releaseStress = { status: 'failed', error: String(error) };
+          });
+        return releaseStress;
+      },
+    );
+    add(
+      'inspect_release_stress',
+      'Read the isolated real-mesh release stress result.',
+      empty,
+      () => releaseStress,
+      true,
+    );
+    add<MajorDeliveryFixture>(
+      'practice_major_delivery',
+      'Isolated QA only: replace this practice bench with an authored delivery 1–32 and zero-based physical phase. Uses the real campaign field, cargo and pockets. Creates synthetic tool ownership/funds and optional developed fittings; quietCalls defaults true and suppresses narrative interruptions for profiling. This is a test checkpoint, not evidence of campaign completion. Never writes player saves.',
+      {
+        type: 'object',
+        properties: {
+          delivery: { type: 'integer', minimum: 1, maximum: 32 },
+          phase: { type: 'integer', minimum: 0, maximum: 4 },
+          tool: { type: 'string', enum: TOOL_ORDER },
+          developed: { type: 'boolean' },
+          funds: { type: 'number', minimum: 0, maximum: 10000000 },
+          quietCalls: { type: 'boolean' },
+        },
+        required: ['delivery'],
+        additionalProperties: false,
+      },
+      (input) => majorQA.practiceMajorDelivery(input),
+    );
+    add<MajorConditionFixture>(
+      'set_major_condition',
+      'Isolated QA only: set one embedded economic item’s condition score for cue/value checks. Optional expose removes the requested fraction of its real front/top ice shell and reports actual exposure/removal; it does not fake an exposure flag. Story evidence is excluded. This intentionally changes the practice field.',
+      {
+        type: 'object',
+        properties: {
+          lootId: { type: 'string' },
+          score: { type: 'number', minimum: 0, maximum: 100 },
+          expose: { type: 'number', minimum: 0, maximum: 1 },
+        },
+        required: ['score'],
+        additionalProperties: false,
+      },
+      (input) => majorQA.setCondition(input),
+    );
+    add<{ event: string }>(
+      'practice_major_call',
+      'Isolated QA only: preview one named active story event on its required delivery/phase. Installs its read/object prerequisites explicitly as a synthetic fixture and rings from line one. Does not apply the call’s read effect. Use normal phone interaction or complete_major_call to resolve it.',
+      {
+        type: 'object',
+        properties: { event: { type: 'string' } },
+        required: ['event'],
+        additionalProperties: false,
+      },
+      ({ event }) => majorQA.practiceCall(event),
+    );
+    add<{ expectedEvent?: string }>(
+      'complete_major_call',
+      'Isolated QA only: answer and advance every remaining line of the current call through normal GameModel methods, then report the read state and commission/refund before and after. Stops after that one event; optional expectedEvent prevents resolving a different call.',
+      {
+        type: 'object',
+        properties: { expectedEvent: { type: 'string' } },
+        additionalProperties: false,
+      },
+      ({ expectedEvent }) => majorQA.completeCall(expectedEvent),
+    );
+    add<VariableFieldFixture>(
+      'practice_variable_field',
+      'Isolated practice bench only: install a real constant-spacing variable field with one physically restrained demo coin. Presets early/mid/late/vault are engineering fixtures, not authored delivery balance. Own all tools; optionally install developed fittings. Never touches player saves.',
+      {
+        type: 'object',
+        properties: {
+          size: { type: 'string', enum: ['early', 'mid', 'late', 'vault'] },
+          dimensions: {
+            type: 'object',
+            properties: {
+              width: { type: 'number', minimum: 1, maximum: 16 },
+              height: { type: 'number', minimum: 1, maximum: 16 },
+              depth: { type: 'number', minimum: 1, maximum: 16 },
+            },
+            required: ['width', 'height', 'depth'],
+            additionalProperties: false,
+          },
+          profile: {
+            type: 'string',
+            enum: [
+              'parcel',
+              'slab',
+              'tower',
+              'wings',
+              'seam',
+              'archive',
+              'vault',
+            ],
+          },
+          material: {
+            type: 'string',
+            enum: ['clear', 'brittle', 'dense', 'reinforced', 'service'],
+          },
+          tool: { type: 'string', enum: TOOL_ORDER },
+          developed: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      },
+      (input) => majorQA.practiceVariableField(input),
+    );
+    add<MajorFieldProfile>(
+      'profile_major_field',
+      'Visible isolated practice bench: measure a fresh 6–10 second window of real tool interaction, field removal, RAF pacing, CPU work, mesh/connectivity timings, dirty chunks and live GPU resources. Reports interrupted/invalid windows explicitly; does not use historical calm-frame statistics.',
+      {
+        type: 'object',
+        properties: {
+          seconds: { type: 'number', minimum: 6, maximum: 10 },
+          tool: { type: 'string', enum: TOOL_ORDER },
+          mode: { type: 'string', enum: ['precision', 'wide'] },
+        },
+        additionalProperties: false,
+      },
+      (input) => majorQA.profileField(input),
+    );
+    add<{ iterations?: number }>(
+      'test_scene_lifetime',
+      'Visible isolated QA only: start up to 20 sequential real GameScene create/render/dispose cycles. Measures native listener cleanup, stopped RAF, context release and bounded GPU allocations after warmup. Full acceptance requires 20. Runs asynchronously; use inspect_major_qa for the report. Pauses/restores the current practice scene.',
+      {
+        type: 'object',
+        properties: {
+          iterations: { type: 'integer', minimum: 1, maximum: 20 },
+        },
+        additionalProperties: false,
+      },
+      ({ iterations }) => majorQA.startLifetime(iterations),
+    );
+    add(
+      'inspect_major_qa',
+      'Read isolated QA state, last fresh performance profile, scene-lifecycle result, authored checkpoint identity, physical field/material/release/condition telemetry and compact save encoding metadata. Read-only; does not return the large encoded voxel payload.',
+      empty,
+      () => majorQA.inspect(),
+      true,
+    );
     add(
       'practice_tool_tree',
       'Isolated practice bench only: install a named tool-tree fixture for visual and purchase QA. Never writes player saves.',
@@ -259,6 +445,62 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
         return read();
       },
     );
+    add(
+      'test_overhaul_ui',
+      'Isolated practice bench: exercise label containment, fresh chisel access and tooltip ownership.',
+      empty,
+      () => overhaulUIAudit(s),
+    );
+    add<{ final?: boolean }>(
+      'practice_delivery',
+      'Isolated visual fixture for the delivery completion receipt, with separate condition bonus and pristine count. Optional final shows a zero-commission receipt. This is a synthetic UI fixture, not campaign completion.',
+      {
+        type: 'object',
+        properties: { final: { type: 'boolean' } },
+        additionalProperties: false,
+      },
+      ({ final }) => {
+        s.cancelInput();
+        m.restart();
+        m.campaign!.state.pending = [];
+        m.campaign!.state.call = undefined;
+        const fee = final ? 0 : 86,
+          net = 720 - fee;
+        m.money = 6 + net;
+        m.earned = m.campaign!.state.grossEarned = 720;
+        m.campaign!.state.netEarned = net;
+        m.campaign!.state.commissionPaid = fee;
+        m.revealedTools = ['hand', 'pick'];
+        m.deliveryStats = {
+          seconds: 147,
+          finds: 8,
+          bestName: 'Gold sovereign',
+          bestValue: 240,
+          base: 600,
+          conditionBonus: 120,
+          pristine: 6,
+          economicFinds: 8,
+        };
+        m.settlement = {
+          gross: 720,
+          fee,
+          net,
+          rate: final ? 0 : 12,
+          name: final ? 'The Final Ledger' : 'The cold drawer',
+          nextGoal: final
+            ? {
+                kind: 'objective',
+                name: 'The record is yours',
+                detail: 'Every name. Every transfer. Every signature.',
+              }
+            : undefined,
+          ...m.deliveryStats,
+        };
+        m.settlementTime = 2.4;
+        m.emit();
+        return read();
+      },
+    );
     let uiAuditResult: unknown = { status: 'not started' };
     add(
       'test_polish_interactions',
@@ -268,7 +510,15 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
         properties: {
           scenario: {
             type: 'string',
-            enum: ['calls', 'map', 'tools', 'camera', 'phone', 'tool-pages'],
+            enum: [
+              'calls',
+              'map',
+              'tools',
+              'camera',
+              'phone',
+              'tool-pages',
+              'growth',
+            ],
           },
         },
         required: ['scenario'],
@@ -277,7 +527,14 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
       ({
         scenario,
       }: {
-        scenario: 'calls' | 'map' | 'tools' | 'camera' | 'phone' | 'tool-pages';
+        scenario:
+          | 'calls'
+          | 'map'
+          | 'tools'
+          | 'camera'
+          | 'phone'
+          | 'tool-pages'
+          | 'growth';
       }) => polishAudit(s, scenario),
     );
     add(
@@ -607,9 +864,14 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
           // leave the final queue intact so the actual ending UI can be tested.
           if (m.phoneRinging) m.answerPhone();
           if (m.liveCall) m.advanceCall();
-          m.field.values.fill(0);
-          m.field.dirty = true;
+          if (m.toolNotice) m.dismissToolNotice();
+          if (m.field.values.some((value) => value > 0)) {
+            m.field.values.fill(0);
+            m.field.revision++;
+            m.field.markAllDirty();
+          }
           m.update(1 / 60, null);
+          if (m.settlement && m.settlementTime === 0) m.skipSettlement();
           if (m.campaign?.state.complete) {
             // Put the receipt behind the remaining final calls without consuming
             // them during this fixture's synchronous settlement fast-forward.
@@ -617,6 +879,10 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
             m.phase = 'completed';
           }
         }
+        if (m.phase !== 'completed')
+          throw new Error(
+            `Ending fixture stopped at delivery ${m.round + 1}; it did not complete the campaign.`,
+          );
         m.emit();
         return read();
       },

@@ -1,6 +1,52 @@
 # Frozen Assets — tool-tree overhaul
 
-Implemented locally from brief b3097f6d-9452-4db8-b578-0cd2f80eeae7 and the accompanying recording. Nothing was published, uploaded, or committed. Earlier QA documents describe historical versions.
+The current 103-node implementation, delivery screen, migration, sound and validation results are recorded in [DELIVERY-PASS.md](DELIVERY-PASS.md). The 60-node records below describe the preceding passes.
+
+## Previous pass — original icons and growing branches, September 8
+
+Source of truth: `344bd79d-8818-42d2-9191-747d738972b6/pasted-text.txt`, with the user's additional emphasis on small icons and purchase/reveal animation. Changes remain local. The pre-existing six-tool, 60-node mechanics and saved IDs are retained.
+
+Each upgrade now has its own authored SVG engraving. Working parts use readable solid silhouettes; cut lines, ice, motion arcs, fracture marks, fan profiles and tank shapes communicate the actual effect. Seven motion families animate the engraved working part independently of the face. All 60 drawings were reviewed together at their actual 36px rendering size; they are original code-native artwork, with no icon library badges.
+
+The six maps now have separately authored coordinates, rather than rotations of a shared radial formula. Hand Chisel is compact, Ice Pick balanced, Heavy Pick broad, Sledge swept outward, Breaker offset and mechanical, Thermal curved around the root. The normal 55px faces retain fixed 82px hit targets. Major diamonds use a 52px side (approximately 74px across).
+
+Purchase choreography is explicit and interruptible: press scale .90, purchase overshoot 1.13 (major .88 / 1.14), branch fill, 260ms parent-to-node stroke following a 70ms start, then child reveal at 350ms from .70 scale. Child overshoot reaches 1.105 and settles to 1. Distant paths fade afterward. Independent purchases retain independent timelines. Closing/switching clears timers; reopening never replays acquisition. A dedicated outer entrance layer prevents the entrance animation from restarting when a purchase's classes are removed. Replacing the purchased SVG restarts its working-part animation even if it was already hovered.
+
+Drag input now converts a node press into pan after 7px, suppresses the resulting pointer click, and leaves keyboard confirmation usable. Panning stops immediately on regrab. Keyboard/gamepad direction selects a connected graph neighbor; bumpers cycle owned tool pages. Tooltip placement scores four directions, avoids the selected node and nearby affordable nodes where possible, and clamps to the viewport. Pointer focus does not recenter the map underneath a press; keyboard focus keeps the selected node in the usable area. Map content is clipped beneath the navigation and above the bench button. Tooltip buttons use a single flat footer instead of nested frames.
+
+### Current verification
+
+- 91 automated tests pass, including branch growth scope/order, connected navigation, tooltip bounds, 60-node geometry, mechanical effects, independent purchases, migration, save restore, immediate chisel impacts and same-frame object release.
+- TypeScript, targeted lint and the production build pass.
+- Live growth audit passes: real money charged exactly once, progressing stroke, delayed child, measured spring, overlapping purchases, cleanup, no acquisition replay on reopen, and reduced motion. Samples showed path offset moving from 1 to 0 before the child appeared, then child scale .70 → 1.105 → 1.
+- The actual browser node-drag check preserved the balance and did not purchase. Controller audit passes all 12 checks. Independent tool purchases and remembered views pass. Fullscreen map, continuous synchronized wheel/rail zoom, and reopened view checks pass.
+- Fresh tutorial UI audit passes the first purchase, focus/return, second parcel, letter audio, player-paced calls, stable labels, Settings separation and archive bounds. This is an automated live player journey, not a new human playtest.
+- Reference comparison used the retained contact sheets covering the 58.37s recording, plus the earlier full-size reference frames. The original Windows temporary MP4 is no longer at its attached path. This pass could not replay the video or reassess its audio/frame-by-frame timing. No copied artwork was used.
+- Browser visuals were inspected at the available 1280×720 viewport. The requested viewport override did not change the rendered dimensions, so no new 960×540 visual pass is claimed; smaller-screen tooltip clamping is covered by deterministic tests.
+
+### Nine-policy pacing rerun
+
+The simulator now includes Control-first and records balances/blocks at reveal and purchase, affordable choices at campaign snapshots, branch purchases, tool usage, and average node intervals. It changes a heat mode or breaker bit only when the desired selection changes; repeatedly reselecting them would incorrectly cancel sustained operation.
+
+Completion minutes: Saver 90.09; Upgrader 89.97; Mixed 90.34; Cheapest-first 89.97; Power-first 88.91; Speed-first 91.20; Control-first 91.29; Technique-first 91.40; Inefficient 108.46. Every run finished with 51 nodes, leaving nine for postgame. Longest normal tool save was 817 seconds (13.62 minutes). Longest interval without an affordable reachable purchase was 361 seconds (6.02 minutes). Normal average node interval was 104–108 seconds, somewhat faster than the aspirational 2–4 minute cadence because later cheap catch-up purchases cluster together; the inefficient policy averaged 124 seconds.
+
+Mixed revealed/purchased tools at: Pick 10.43/14.45, Heavy 22.11/28.90, Sledge 35.73/44.48, Breaker 54.86/61.08, Thermal 64.35/74.95 minutes. Thermal remains a few minutes early relative to the suggested window. Upgrader's saving behavior brings Thermal acquisition later. Prices and gameplay modifiers were not changed merely to force exact timestamps.
+
+Equal-money comparison now covers all four priorities, six tools and two real claim compartments per tool (48 cases). Each priority spent exactly $152,150 across the fixtures. Total clear seconds: Power 911.80; Speed 997.90; Control 880.90; Technique 896.85. Spread relative to fastest: 13.28%; all cases completed. Control wins this representative mix, while different tool/shape pairings favor other investments. Equal-price selection keeps maximum preferred-branch ownership and chooses distinct tied loadouts, rather than silently comparing the same build twice.
+
+### Five review passes
+
+1. **Progression:** Retained the brief's meaningful 8/10/10/10/10/12-node structure and permanent ownership. Four immediate branch choices, one dim step and one unknown step preserve planning without dumping other tools' maps.
+2. **Economy:** Added the missing ninth policy and four-priority equal-spend comparison; fixed mode switching in the simulator. Recorded the timing/interval limits above rather than representing simulations as human timings.
+3. **Tool identity:** Reviewed the 60 effects against the brief and gave each icon a tool-specific physical subject and action. Existing mechanics, alternative bits, charged swings and thermal residual behavior remain covered by tests.
+4. **UI/reference:** Replaced repeated category badges, authored six different map silhouettes, fixed node-origin drags, tooltip placement/frames, connected navigation, growth timing and entrance replay. Visually checked all engravings and live map states.
+5. **Player journey:** Re-ran the live tutorial, first upgrade, controller, map and purchase audits on disposable practice saves. Normal campaign simulation remains approximately 90 minutes. Human first-play pacing and direct video playback remain external validation limits.
+
+Reproduce with `npm test`, `npx tsc --noEmit`, `npm run build`, `node tests/run-progression.mjs`, and `node tests/compare-branches.mjs`. At `?qa=1`, `test_polish_interactions` with `scenario: "growth"` measures the actual DOM animation sequence. Reports under `qa-artifacts/` are ignored local test output.
+
+## Previous implementation record
+
+The following records the earlier baseline work from brief b3097f6d-9452-4db8-b578-0cd2f80eeae7. It was subsequently committed as `d9cd993`; measurements below are historical and the current results above supersede them.
 
 ## Implementation
 

@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { GameModel } from './model';
 import type { GameScene } from './scene';
 import { TOOLS } from './campaign-content';
+import { TUNE } from './tuning';
+import { TOOL_TREES } from './tool-trees';
+import { TREE_GROWTH, growthPlan } from './tree-presentation';
 
 // Registered only on the isolated localhost ?qa=1 bench. Uses the same DOM
 // handlers, running render loop and model physics as the player controls.
@@ -135,7 +138,10 @@ export async function motionAudit(
     } else if (scenario === 'tools') {
       const poses: Record<string, unknown> = {};
       for (const tool of TOOLS) {
-        m.restore(saved);
+        // Use a fresh, quiet claim. A saved call or a target above a small
+        // claim must not turn this into an empty-space motion measurement.
+        m.restart();
+        m.campaign!.state.pending = [];
         m.campaign!.state.tools = TOOLS.map((t) => t.id);
         m.selectTool(tool.id);
         m.settings.toggle = true;
@@ -144,17 +150,22 @@ export async function motionAudit(
         s.delivery.set(0);
         s.contents.position.set(0, 0, 0);
         s.turntable.home();
-        s.hasPointer = true;
-        const center = s.contents
-          .localToWorld(new THREE.Vector3(0, 2.2, 0))
-          .project(s.camera);
-        s.pointer.set(center.x, center.y);
+        const scale = m.field.profile!.scale * TUNE.worldScale;
+        const center = new THREE.Vector3();
+        s.automation = () => {
+          center
+            .set(0, 2.2 * scale, 0.65 * 1.32 * scale)
+            .applyMatrix4(s.ice.matrixWorld)
+            .project(s.camera);
+          s.pointer.set(center.x, center.y);
+          s.hasPointer = true;
+        };
         s.audio.init();
-        await wait(80);
+        await wait(300);
         const before = m.field.remaining(),
           values: number[] = [];
         m.press();
-        await wait(tool.id === 'thermal' ? 650 : 450, () =>
+        await wait(tool.id === 'thermal' ? 1000 : 700, () =>
           values.push(s.workshop.hand.rotation.x),
         );
         m.stop();
@@ -201,35 +212,130 @@ export async function motionAudit(
       result.peakParticles = peakParticles;
       result.creditedOnce = m.recovered === 3;
     } else if (scenario === 'purchase') {
+      back();
+      await wait(350);
       m.restart();
+      m.campaign!.state.pending = [];
       m.money = m.earned = 2000;
       m.campaign!.state.grossEarned = m.campaign!.state.netEarned = 2000;
+      m.emit();
       key('u');
-      await wait(800);
+      await wait(500);
       document
-        .querySelector<HTMLButtonElement>('[data-skill="heat-1"]')
+        .querySelector<HTMLButtonElement>('.tool-page-tabs button')
         ?.click();
-      let min = 1,
-        max = 0,
-        sampled = false;
-      await wait(1100, () => {
-        const edge = document.querySelector('.map-current.waking');
-        if (!edge) return;
-        const value = parseFloat(getComputedStyle(edge).strokeDashoffset);
-        sampled = true;
-        min = Math.min(min, value);
-        max = Math.max(max, value);
+      await wait(220);
+      const id = 'HC-S1';
+      const node = document.querySelector<HTMLButtonElement>(
+        `[data-skill="${id}"]`,
+      );
+      if (!node || node.hidden)
+        throw new Error('Fresh Chisel upgrade node is unavailable');
+      const changes = growthPlan('hand', id, m.nodes.hand);
+      const cost = TOOL_TREES.hand.find((n) => n.id === id)!.cost;
+      key('Tab');
+      node.focus();
+      await wait(220);
+      const buy = document.querySelector<HTMLButtonElement>(
+        '.node-tooltip .tree-buy',
+      );
+      if (!buy || buy.disabled)
+        throw new Error(
+          'Chisel inspection did not expose an enabled Buy control',
+        );
+      const moneyBefore = m.money;
+      const effectiveReduced =
+        !!node.closest('.reduced-motion') ||
+        matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const animationNames = new Set<string>();
+      const firstReveal = new Map<string, number>();
+      let min = Infinity,
+        max = -Infinity,
+        sampled = false,
+        fittingObserved = false,
+        childRevealAnimated = false,
+        nextFrontierAnimated = false;
+      buy.focus();
+      const purchaseStarted = performance.now();
+      buy.click();
+      await wait(TREE_GROWTH.settleAt + 180, () => {
+        const edge = document.querySelector('.map-current.purchase-travel');
+        if (edge) {
+          const style = getComputedStyle(edge);
+          const value = parseFloat(style.strokeDashoffset);
+          if (Number.isFinite(value)) {
+            sampled = true;
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+          }
+          animationNames.add(style.animationName);
+        }
+        fittingObserved ||= node.classList.contains('fitting');
+        nextFrontierAnimated ||= !!document.querySelector(
+          '.map-current.path-revealed',
+        );
+        for (const change of changes) {
+          const child = document.querySelector<HTMLElement>(
+            `[data-skill="${change.id}"]`,
+          );
+          if (!child) continue;
+          if (change.child && child.classList.contains('child-revealed'))
+            childRevealAnimated = true;
+          if (
+            child.classList.contains(change.to) &&
+            !firstReveal.has(change.id)
+          )
+            firstReveal.set(change.id, performance.now() - purchaseStarted);
+        }
       });
-      result.fitted = m.upgrades.heat;
-      result.moneySpent = m.money < 2000;
-      result.connectionTravel = { sampled, min, max };
-      result.childAwakened = !!document.querySelector('.map-node.awakened');
+      const reveals = changes.map((change) => ({
+        ...change,
+        firstObservedMs: firstReveal.get(change.id) ?? null,
+        finalStateMatches: !!document.querySelector(
+          `[data-skill="${change.id}"].${change.to}`,
+        ),
+      }));
+      result.fittedNode = id;
+      result.fitted = Number(m.nodes.hand.includes(id));
+      result.moneySpent = m.money < moneyBefore;
+      result.expectedCost = cost;
+      result.exactCostPaid = moneyBefore - m.money === cost;
+      result.effectiveReduced = effectiveReduced;
+      result.connectionTravel = {
+        expected: !effectiveReduced,
+        sampled,
+        min: sampled ? min : null,
+        max: sampled ? max : null,
+        varied: sampled && max - min > 0.05,
+        animationNames: [...animationNames],
+      };
+      result.fittingObserved = fittingObserved;
+      result.childRevealAnimated = childRevealAnimated;
+      result.nextFrontierAnimated = nextFrontierAnimated;
+      result.childAwakened = reveals
+        .filter((r) => r.child)
+        .every((r) => r.finalStateMatches);
+      result.reveals = reveals;
+      result.growthSettled = !document.querySelector(
+        '.map-node.fitting,.map-node.child-revealed,.map-node.tease-revealed,.map-current.purchase-travel,.map-current.path-revealed',
+      );
+      result.motionMatchesPreference = effectiveReduced
+        ? !sampled &&
+          !fittingObserved &&
+          !childRevealAnimated &&
+          !nextFrontierAnimated
+        : sampled &&
+          max - min > 0.05 &&
+          fittingObserved &&
+          childRevealAnimated &&
+          nextFrontierAnimated;
       back();
       await wait(350);
     } else throw new Error('Unknown motion scenario');
     result.performance = s.stats();
     return result;
   } finally {
+    s.automation = undefined;
     s.cancelInput();
     m.restart();
     m.restore(saved);

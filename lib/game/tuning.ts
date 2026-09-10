@@ -23,7 +23,7 @@ export const TUNE = {
   fragmentCap: 18,
   audioVoices: 12,
   finalRound: 20,
-  saveVersion: 4,
+  saveVersion: 5,
   rotationSensitivity: 0.007,
   rotationSpring: 150,
   rotationDamping: 25,
@@ -34,7 +34,7 @@ export const TUNE = {
 export const worldY = (y: number) => 0.18 + (y - 0.18) * TUNE.worldScale;
 export type Vec3 = { x: number; y: number; z: number };
 export type LootKind = 'coin' | 'cash' | 'gold';
-export type Loot = {
+export type Loot = import('./condition').ConditionFields & {
   id: string;
   kind: LootKind;
   value: number;
@@ -51,6 +51,7 @@ export type Loot = {
   story?: import('./campaign-content').StoryObjectId;
   variant?: number;
   name?: string;
+  sensitivity?: import('./condition').CargoSensitivity;
 };
 export const FAMILY_NAMES = [
   'Loose change',

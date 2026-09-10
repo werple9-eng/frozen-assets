@@ -12,6 +12,7 @@ const policies = [
   'cheapest-first',
   'power-first',
   'speed-first',
+  'control-first',
   'technique-first',
   'inefficient',
 ];
@@ -59,4 +60,4 @@ writeFileSync(
   ),
 );
 if (runs.some((r) => !r.completed)) throw Error('A campaign did not finish');
-console.log('All eight campaigns completed.');
+console.log(`All ${policies.length} campaigns completed.`);

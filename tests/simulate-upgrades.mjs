@@ -20,6 +20,9 @@ const policy = process.argv[2] ?? 'mixed',
   blocks = [],
   events = [],
   purchases = [],
+  choiceSnapshots = [],
+  toolUsageSeconds = {},
+  revealDetails = {},
   toolReveals = {},
   toolBuys = {};
 const ray = new THREE.Raycaster(),
@@ -98,6 +101,7 @@ const tutorialSeconds = clock;
 start = clock;
 while (m.phase !== 'completed' && clock < 150 * 60) {
   const c = m.campaign;
+  if (m.settlement) { if (m.settlementTime > 0) { m.update(.05,null); clock += .05; } else m.skipSettlement(); continue; }
   if (m.round !== oldBlock) {
     blocks.push({
       block: oldBlock + 1,
@@ -130,7 +134,14 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
   if (m.toolNotice) {
     const { tool, kind } = m.toolNotice;
     events.push({ tool, kind, seconds: Math.round(clock), money: m.money });
-    if (kind === 'available') toolReveals[tool] = clock;
+    if (kind === 'available') {
+      toolReveals[tool] = clock;
+      revealDetails[tool] = {
+        seconds: Math.round(clock),
+        money: m.money,
+        block: m.round + 1,
+      };
+    }
     clock += 3;
     m.dismissToolNotice();
   }
@@ -154,6 +165,10 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
           saving: Math.round(clock - (toolReveals[next.id] ?? clock)),
           before,
           after: m.money,
+          block: m.round + 1,
+          blocksSaving:
+            m.round + 1 - (revealDetails[next.id]?.block ?? m.round + 1),
+          moneyAtReveal: revealDetails[next.id]?.money,
           nodes: Object.values(m.nodes).flat().length,
         };
         purchases.push({
@@ -193,6 +208,7 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
     const preferred = {
       'power-first': 'power',
       'speed-first': 'speed',
+      'control-first': 'control',
       'technique-first': 'technique',
     }[policy];
     const sortValue = (n) => {
@@ -203,11 +219,34 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
       return n.cost * branch * (active ? 0.65 : 1.4) * (n.major ? 0.92 : 1);
     };
     reachable.sort((a, b) => sortValue(a) - sortValue(b));
+    if (
+      [0, 4, 9, 16, 23, 27, 31].includes(m.round) &&
+      !choiceSnapshots.some((s) => s.block === m.round + 1)
+    ) {
+      choiceSnapshots.push({
+        block: m.round + 1,
+        seconds: Math.round(clock),
+        money: m.money,
+        tool: m.toolId,
+        affordable: reachable
+          .filter((n) => n.cost <= m.money)
+          .map((n) => ({
+            id: n.id,
+            name: n.name,
+            branch: n.branch,
+            cost: n.cost,
+          })),
+        savingFor: next?.id,
+      });
+    }
     // Branch-first players save for a preferred fitting, instead of silently
     // becoming cheapest-first whenever that fitting costs more than their wallet.
+    // Normal players fit equipment they still use. The explicit cheapest-first
+    // collector remains free to buy every inexpensive retired-tool node.
+    const working = reachable.filter(n => policy === 'cheapest-first' || n.toolId === canonicalTool(m.toolId) || n.toolId === canonicalTool(c.state.tools.at(-1)));
     const available = preferred
-      ? reachable.slice(0, 1).filter((n) => n.cost <= m.money)
-      : reachable.filter((n) => n.cost <= m.money);
+      ? working.slice(0, 1).filter((n) => n.cost <= m.money)
+      : working.filter((n) => n.cost <= m.money);
     const pick = available.find((n) => {
       const reserve = next ? next.cost : 0;
       if (policy === 'saver' || policy === 'inefficient')
@@ -250,8 +289,11 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
           : latest;
   if (policy !== 'inefficient' && preferred !== m.toolId)
     m.selectTool(preferred);
-  if (m.thermal && m.hasFan)
-    m.selectMode(shape === 'slab' ? 'wide' : 'precision');
+  const heatMode = shape === 'slab' ? 'wide' : 'precision';
+  if (m.thermal && m.hasFan && m.mode !== heatMode) m.selectMode(heatMode);
+  const bit = shape === 'slab' && m.hasNode('PB-C4') ? 'wide' : 'precision';
+  if (m.toolId === 'breaker' && m.hasNode('PB-C3') && m.breakerBit !== bit)
+    m.selectBreakerBit(bit);
   if (m.thermal && m.fuel <= 0.01) m.refill();
   if (refresh <= 0 && m.phase === 'playing') {
     refresh = policy === 'inefficient' ? 0.45 : 0.3;
@@ -297,6 +339,7 @@ while (m.phase !== 'completed' && clock < 150 * 60) {
       charge = 0;
     }
   }
+  toolUsageSeconds[m.toolId] = (toolUsageSeconds[m.toolId] ?? 0) + 0.05;
   m.update(0.05, aim);
   clock += 0.05;
   refresh -= 0.05;
@@ -326,6 +369,25 @@ const result = {
   blocks,
   events,
   purchases,
+  revealDetails,
+  choiceSnapshots,
+  toolUsageSeconds: Object.fromEntries(
+    Object.entries(toolUsageSeconds).map(([k, v]) => [k, Math.round(v)]),
+  ),
+  purchasedBranches: Object.fromEntries(
+    ['power', 'speed', 'control', 'technique'].map((branch) => [
+      branch,
+      ALL_TOOL_NODES.filter(
+        (n) => n.branch === branch && m.nodes[n.toolId].includes(n.id),
+      ).length,
+    ]),
+  ),
+  averageUpgradeIntervalSeconds: (() => {
+    const times = purchases.filter((p) => p.kind === 'node').map((p) => p.time);
+    return Math.round(
+      (times.at(-1) - times[0]) / Math.max(1, times.length - 1),
+    );
+  })(),
 };
 mkdirSync('qa-artifacts', { recursive: true });
 writeFileSync(

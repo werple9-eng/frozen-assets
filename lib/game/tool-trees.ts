@@ -25,7 +25,17 @@ export type NodeEffect = Partial<
     | 'detach'
     | 'fuel'
     | 'burn'
-    | 'afterheat',
+    | 'afterheat'
+    | 'side'
+    | 'sideDepth'
+    | 'steadiness'
+    | 'resonance'
+    | 'charge'
+    | 'wideArea'
+    | 'focusPower'
+    | 'sustainPower'
+    | 'thirdPower'
+    | 'release',
     number
   >
 > & { mechanic?: string };
@@ -43,6 +53,7 @@ export type ToolNode = {
   effect: NodeEffect;
   comparison: string;
   rank: number;
+  glyph: string;
 };
 export type ToolNodesOwned = Record<MajorTool, string[]>;
 export const freshNodes = (): ToolNodesOwned => ({
@@ -60,491 +71,842 @@ export const BRANCH_COLORS: Record<Branch, string> = {
   control: '#638b9d',
   technique: '#628f83',
 };
-// Node budget anchors calibrated against measured claim earnings and eight real
-// surface-targeting campaign policies. Mid-game anchors sit below median income
-// so small fittings remain reachable while saving for equipment.
+// Representative equal-spend comparison budgets. Runtime node prices come
+// from explicit tier bands below, not a multiplier of delivery earnings.
 export const NODE_BUDGET: Record<MajorTool, number> = {
   hand: 175,
   pick: 550,
   heavy: 1900,
-  sledge: 4200,
-  breaker: 6500,
-  thermal: 13000,
+  sledge: 4700,
+  breaker: 7300,
+  thermal: 14600,
 };
 export const TOOL_PRICES: Record<MajorTool, number> = {
   hand: 0,
-  pick: 650,
-  heavy: 2800,
-  sledge: 8000,
-  breaker: 17500,
-  thermal: 20000,
+  pick: 2500,
+  heavy: 6500,
+  sledge: 22000,
+  breaker: 35000,
+  thermal: 45000,
 };
-type Entry = [string, string, string, NodeEffect, string, boolean?];
+export const NODE_PRICE_BANDS: Record<
+  MajorTool,
+  { micro: [number, number]; major: [number, number] }
+> = {
+  hand: { micro: [60, 220], major: [300, 650] },
+  pick: { micro: [180, 500], major: [700, 1400] },
+  heavy: { micro: [400, 900], major: [1600, 2800] },
+  sledge: { micro: [800, 1800], major: [3000, 6000] },
+  breaker: { micro: [1400, 2800], major: [5000, 9000] },
+  thermal: { micro: [1800, 3600], major: [6500, 11000] },
+};
+// The first small fitting is reachable while saving; deeper ranks cost more,
+// and mechanical milestones stay distinct. These are simulator starting values.
+// Hold to Chip retains the $25 induction lesson, before the campaign economy.
+function nodePrice(
+  tool: MajorTool,
+  rank: number,
+  isMajor: boolean,
+  id: string,
+) {
+  if (id === 'HC-S1') return 25;
+  const [min, max] = NODE_PRICE_BANDS[tool][isMajor ? 'major' : 'micro'];
+  const rankProgress = Math.min(1, Math.max(0, (rank - 1) / (isMajor ? 4 : 3)));
+  // Later equipment starts farther into its existing price band: early choices
+  // compete for a real budget, while deepest ranks and all hand prices stay put.
+  const progress = tool === 'hand' ? rankProgress : 0.3 + 0.7 * rankProgress;
+  const step = isMajor
+    ? tool === 'hand' || tool === 'pick'
+      ? 50
+      : tool === 'heavy'
+        ? 100
+        : 250
+    : tool === 'hand' || tool === 'pick'
+      ? 10
+      : 50;
+  return Math.max(
+    min,
+    Math.min(max, Math.round((min + (max - min) * progress) / step) * step),
+  );
+}
+type Entry = [string, string, string, NodeEffect, string, boolean?, string?];
+const micro = (
+  prefix: string,
+  names: string[],
+  key: keyof NodeEffect,
+  factor: number,
+  description: string,
+  glyph: string,
+): Entry[] =>
+  names.map((name, i) => [
+    `${prefix}${i + 1}`,
+    name,
+    description,
+    { [key]: factor },
+    `${factor < 1 ? '−' : '+'}${Math.round(Math.abs(factor - 1) * 100)}% per fitting · stacks with this branch`,
+    false,
+    glyph,
+  ]);
+const major = (
+  id: string,
+  name: string,
+  description: string,
+  effect: NodeEffect,
+  comparison: string,
+  glyph: string,
+): Entry => [id, name, description, effect, comparison, true, glyph];
 const authored: Record<MajorTool, Entry[]> = {
   hand: [
-    [
+    ...micro(
+      'HC-P',
+      [
+        'Stronger Tap I',
+        'Stronger Tap II',
+        'Stronger Tap III',
+        'Stronger Tap IV',
+      ],
+      'power',
+      1.05,
+      'Break 5% more ice with every tap.',
       'HC-P1',
-      'Stronger tap',
-      'Break 20% more ice with each hit.',
-      { power: 1.2 },
-      '1.00× → 1.20× impact',
-    ],
-    [
+    ),
+    major(
+      'HC-P5',
+      'Hard Edge',
+      'A hardened edge drives 20% more force into the center of each tap.',
+      { center: 1.2 },
+      '+20% center impact',
       'HC-P2',
-      'Hard edge',
-      'Break another 20% more ice.',
-      { power: 1.2 },
-      '1.20× → 1.44× impact',
-    ],
-    [
+    ),
+    major(
       'HC-S1',
       'Hold to Chip',
       'Hold the button to keep striking.',
       { mechanic: 'hold' },
       'Click → click or hold',
-      true,
-    ],
-    [
+      'HC-S1',
+    ),
+    ...micro(
+      'HC-S',
+      ['Quick Hands I', 'Quick Hands II', 'Quick Hands III'],
+      'cycle',
+      1 / 1.05,
+      'Work 5% faster, with the same instant first tap.',
       'HC-S2',
-      'Quick hands',
-      'Swing again 14% sooner.',
-      { cycle: 0.86 },
-      '100% → 86% recovery',
-    ],
-    [
+    ).map((n, i) => [n[0].slice(0, -1) + (i + 2), ...n.slice(1)] as Entry),
+    ...micro(
+      'HC-C',
+      ['Sharp Point I', 'Sharp Point II', 'Sharp Point III'],
+      'center',
+      1.05,
+      'Concentrate 5% more impact at the point.',
       'HC-C1',
-      'Sharp point',
-      'Break more ice right where you aim.',
-      { center: 1.3 },
-      '1.00× → 1.30× center impact',
-    ],
-    [
+    ),
+    major(
+      'HC-C4',
+      'Surface Peel',
+      'Peel ice around visible finds 25% faster.',
+      { visible: 1.25 },
+      '+25% near visible finds',
       'HC-C2',
-      'Surface peel',
-      'Break ice around visible valuables 30% faster.',
-      { visible: 1.3 },
-      '1.00× → 1.30× near visible finds',
-    ],
-    [
+    ),
+    ...micro(
+      'HC-T',
+      ['Clean Release I', 'Clean Release II'],
+      'release',
+      0.95,
+      'Clear the last thin restraints around small finds 5% sooner. Solid ice still holds them.',
       'HC-T1',
-      'Clean release',
-      'Chip the last thin ice around small finds.',
-      { mechanic: 'cleanRelease' },
-      'Thin restraints crumble sooner',
-    ],
-    [
-      'HC-T2',
-      'Flick loose',
-      'Weak pieces break away sooner.',
+    ),
+    major(
+      'HC-T3',
+      'Flick Loose',
+      'Dislodge weak pieces close to the tip.',
       { detach: 1.25 },
-      '1.00× → 1.25× weak-ice reach',
-    ],
+      '+25% local weak-ice reach',
+      'HC-T2',
+    ),
   ],
   pick: [
-    [
+    ...micro(
+      'IP-P',
+      ['Deeper Bite I', 'Deeper Bite II', 'Deeper Bite III', 'Hardened Point'],
+      'power',
+      1.05,
+      'Drive the point through 5% more ice.',
       'IP-P1',
-      'Deeper bite',
-      'Break 22% more ice with each hit.',
-      { power: 1.22 },
-      '1.00× → 1.22× impact',
-    ],
-    [
-      'IP-P2',
-      'Hardened point',
-      'Break another 22% more ice.',
-      { power: 1.22 },
-      '1.22× → 1.49× impact',
-    ],
-    [
-      'IP-P3',
-      'Split strike',
-      'Every fourth hit in one spot chips a second piece.',
+    ),
+    major(
+      'IP-P5',
+      'Split Strike',
+      'Every fourth hit in one spot chips a second piece. Moving resets the count.',
       { mechanic: 'split' },
       '4 local hits → a second chip',
-      true,
-    ],
-    [
+      'IP-P3',
+    ),
+    ...micro(
+      'IP-S',
+      [
+        'Faster Swing I',
+        'Faster Swing II',
+        'Faster Swing III',
+        'Faster Swing IV',
+      ],
+      'cycle',
+      1 / 1.05,
+      'Swing 5% faster without losing the readable impact.',
       'IP-S1',
-      'Faster swing',
-      'Swing again 12% sooner.',
-      { cycle: 0.88 },
-      '100% → 88% recovery',
-    ],
-    [
-      'IP-S2',
-      'Balanced shaft',
-      'Swing again another 12% sooner.',
-      { cycle: 0.88 },
-      '88% → 77% recovery',
-    ],
-    [
-      'IP-S3',
+    ),
+    major(
+      'IP-S5',
       'Rhythm',
-      'Keep holding the pick on ice to swing faster.',
+      'Hold on one spot for 1.2 seconds to find a faster rhythm.',
       { mechanic: 'rhythm' },
-      '1.2s contact → 15% faster',
-      true,
-    ],
-    [
+      '+15% sustained cadence',
+      'IP-S3',
+    ),
+    ...micro(
+      'IP-C',
+      ['Sharp Point I', 'Sharp Point II', 'Sharp Point III'],
+      'center',
+      1.05,
+      'Put 5% more force into the center of the strike.',
       'IP-C1',
-      'Sharp point',
-      'Hits near the center break 25% more ice.',
-      { center: 1.25 },
-      '1.00× → 1.25× center impact',
-    ],
-    [
+    ),
+    major(
+      'IP-C4',
+      'Reward Carve',
+      'Carve around visible valuables 25% faster.',
+      { visible: 1.25 },
+      '+25% near visible finds',
       'IP-C2',
-      'Reward carve',
-      'Break ice around visible valuables 30% faster.',
-      { visible: 1.3 },
-      '1.00× → 1.30× near visible finds',
-    ],
-    [
+    ),
+    ...micro(
+      'IP-T',
+      ['Crack Chaser I', 'Crack Chaser II'],
+      'weak',
+      1.07,
+      'Strike already damaged ice 7% harder.',
       'IP-T1',
-      'Crack chaser',
-      'Weakened ice breaks 35% faster.',
-      { weak: 1.35 },
-      '1.00× → 1.35× on damaged ice',
-    ],
-    [
-      'IP-T2',
-      'Hook out',
-      'Weak chunks break loose sooner.',
+    ),
+    major(
+      'IP-T3',
+      'Hook Out',
+      'Pull loose weak fragments around your strike.',
       { detach: 1.4 },
-      '1.00× → 1.40× weak-ice reach',
-      true,
-    ],
+      '+40% local weak-ice reach',
+      'IP-T2',
+    ),
   ],
   heavy: [
-    [
+    ...micro(
+      'HP-P',
+      ['Heavier Head I', 'Heavier Head II', 'Heavier Head III'],
+      'power',
+      1.05,
+      'A heavier forged head breaks 5% more ice.',
       'HP-P1',
-      'Heavier head',
-      'Break 25% more ice.',
-      { power: 1.25 },
-      '1.00× → 1.25× impact',
-    ],
+    ),
     [
+      'HP-P4',
+      'Deep Bite',
+      'Reach 8% deeper along the contact normal.',
+      { depth: 1.08 },
+      '+8% depth',
+      false,
       'HP-P2',
-      'Deep bite',
-      'Your hit reaches deeper into the ice.',
-      { depth: 1.2 },
-      '1.00× → 1.20× depth',
     ],
-    [
-      'HP-P3',
+    major(
+      'HP-P5',
       'Breakthrough',
-      'Hard hits punch deep into thick ice.',
-      { center: 1.4, depth: 1.25 },
-      '+40% center power · +25% depth',
-      true,
-    ],
-    [
+      'Punch a deeper channel with the forged point.',
+      { center: 1.2, depth: 1.15 },
+      '+20% center · +15% depth',
+      'HP-P3',
+    ),
+    ...micro(
+      'HP-S',
+      [
+        'Better Balance I',
+        'Better Balance II',
+        'Recovery Grip I',
+        'Recovery Grip II',
+      ],
+      'cycle',
+      1 / 1.04,
+      'Recover 4% faster while keeping the heavy swing.',
       'HP-S1',
-      'Better balance',
-      'Swing again 10% sooner.',
-      { cycle: 0.9 },
-      '100% → 90% recovery',
-    ],
-    [
-      'HP-S2',
-      'Recovery grip',
-      'Swing again another 12% sooner.',
-      { cycle: 0.88 },
-      '90% → 79% recovery',
-    ],
-    [
-      'HP-S3',
+    ),
+    major(
+      'HP-S5',
       'Momentum',
-      'Three hits in one area make the third much stronger.',
-      { mechanic: 'momentum' },
-      'Every third local hit → +40%',
-      true,
-    ],
-    [
+      'Every third hit in one area carries extra force.',
+      { mechanic: 'momentum', thirdPower: 1.3 },
+      'Third local hit: +30% force',
+      'HP-S3',
+    ),
+    ...micro(
+      'HP-C',
+      ['Guided Strike I', 'Guided Strike II'],
+      'side',
+      1.1,
+      'Reduce the penalty on side-face strikes by 8 percentage points.',
       'HP-C1',
-      'Guided strike',
-      'Keep full power on the side of a block.',
-      { mechanic: 'guided' },
-      'Side impact: 80% → 100%',
-    ],
+    ),
     [
+      'HP-C3',
+      'Reach In',
+      'Reach 8% deeper into side faces.',
+      { sideDepth: 1.08 },
+      '+8% side depth',
+      false,
       'HP-C2',
-      'Reach in',
-      'Deep side hits reach 20% farther.',
-      { mechanic: 'reach' },
-      '1.00× → 1.20× side depth',
     ],
-    [
+    major(
+      'HP-C4',
+      'Deep Reach',
+      'Reach another 12% deeper into side channels.',
+      { sideDepth: 1.12 },
+      '+12% side depth',
+      'HP-C2',
+    ),
+    ...micro(
+      'HP-T',
+      ['Support Breaker I', 'Support Breaker II'],
+      'support',
+      1.15,
+      'Break thin local supports 15% faster.',
       'HP-T1',
-      'Support breaker',
-      'Thin supports break 50% faster.',
-      { support: 1.5 },
-      '1.00× → 1.50× on thin supports',
-    ],
-    [
-      'HP-T2',
+    ),
+    major(
+      'HP-T3',
       'Spall',
-      'Big hits knock loose nearby weak ice.',
+      'A hit can fracture one nearby weakened piece.',
       { mechanic: 'spall' },
-      'Strong hit → one nearby chip',
-      true,
-    ],
+      'One bounded secondary fracture',
+      'HP-T2',
+    ),
   ],
   sledge: [
-    [
+    ...micro(
+      'SH-P',
+      ['Forged Head I', 'Forged Head II', 'Full Swing I', 'Full Swing II'],
+      'power',
+      1.05,
+      'Drive 5% more force through the broad head.',
       'SH-P1',
-      'Forged head',
-      'Break 30% more ice.',
-      { power: 1.3 },
-      '1.00× → 1.30× impact',
-    ],
-    [
-      'SH-P2',
-      'Full swing',
-      'Break another 25% more ice.',
-      { power: 1.25 },
-      '1.30× → 1.63× impact',
-    ],
-    [
-      'SH-P3',
-      'Demolition blow',
-      'Heavy hits shake loose much bigger chunks.',
+    ),
+    major(
+      'SH-P5',
+      'Demolition Blow',
+      'A heavy blow shakes apart nearby weak fractures.',
       { detach: 1.7 },
-      '1.00× → 1.70× fracture reach',
-      true,
-    ],
-    [
+      '+70% local fracture reach',
+      'SH-P3',
+    ),
+    ...micro(
+      'SH-S',
+      ['Lighter Handle I', 'Lighter Handle II'],
+      'cycle',
+      1 / 1.04,
+      'Recover 4% faster between heavy swings.',
       'SH-S1',
-      'Lighter handle',
-      'Recover from a swing 10% sooner.',
-      { cycle: 0.9 },
-      '100% → 90% recovery',
-    ],
+    ),
     [
+      'SH-S3',
+      'Quick Recovery',
+      'Recover 5% faster after impact.',
+      { cycle: 1 / 1.05 },
+      '+5% cadence',
+      false,
       'SH-S2',
-      'Quick recovery',
-      'Recover another 12% sooner.',
-      { cycle: 0.88 },
-      '90% → 79% recovery',
     ],
-    [
+    major(
+      'SH-S4',
+      'Balanced Swing',
+      'Recover 7% faster while retaining a heavy, readable arc.',
+      { cycle: 1 / 1.07 },
+      '+7% cadence · heavy cycle floor',
+      'SH-S2',
+    ),
+    ...micro(
+      'SH-C',
+      ['Wide Face I', 'Wide Face II', 'Wide Face III'],
+      'area',
+      1.05,
+      'A broader face chips 5% more area.',
       'SH-C1',
-      'Wide face',
-      'Each hit covers 18% more area.',
-      { area: 1.18 },
-      '1.00× → 1.18× hit area',
-    ],
-    [
+    ),
+    major(
+      'SH-C4',
+      'Shock Ring',
+      'Spread the blow through nearby weak fractures.',
+      { detach: 1.25 },
+      '+25% weak-fracture influence',
       'SH-C2',
-      'Shock ring',
-      'Heavy hits spread through nearby ice.',
-      { area: 1.2, detach: 1.2 },
-      '+20% area · +20% fracture reach',
-    ],
-    [
+    ),
+    major(
       'SH-T1',
-      'Wind up',
-      'Hold the button to charge a huge hit.',
-      { mechanic: 'charge' },
-      'Hold up to 0.65s → 2.00× impact',
-      true,
-    ],
+      'Wind Up',
+      'Hold up to 650ms, then release a charged blow.',
+      { mechanic: 'charge', charge: 1.75 },
+      'Charge up to 1.75× force',
+      'SH-T1',
+    ),
     [
       'SH-T2',
-      'Heavy charge',
-      'Fully charged hits are even stronger.',
-      { mechanic: 'heavyCharge' },
-      '2.00× → 2.60× charged impact',
+      'Heavier Charge I',
+      'A full wind-up now delivers 1.90× force.',
+      { charge: 1.9 / 1.75 },
+      '1.75× → 1.90× maximum',
+      false,
+      'SH-T2',
     ],
     [
       'SH-T3',
-      'Break loose',
-      'Charged hits shake weak chunks loose at once.',
-      { mechanic: 'breakLoose' },
-      'Charged hit → immediate fracture',
-      true,
+      'Heavier Charge II',
+      'A full wind-up now delivers 2.05× force.',
+      { charge: 2.05 / 1.9 },
+      '1.90× → 2.05× maximum',
+      false,
+      'SH-T2',
     ],
+    major(
+      'SH-T4',
+      'Break Loose',
+      'Charged blows detach weak fragments close to the impact.',
+      { mechanic: 'breakLoose' },
+      'Charged local breakaway',
+      'SH-T3',
+    ),
   ],
   breaker: [
-    [
+    ...micro(
+      'PB-P',
+      [
+        'Harder Stroke I',
+        'Harder Stroke II',
+        'Bigger Piston I',
+        'Bigger Piston II',
+      ],
+      'power',
+      1.05,
+      'The piston delivers 5% more impact.',
       'PB-P1',
-      'Harder stroke',
-      'Each hit breaks 18% more ice.',
-      { power: 1.18 },
-      '1.00× → 1.18× impact',
-    ],
-    [
-      'PB-P2',
-      'Bigger piston',
-      'Each hit breaks another 20% more ice.',
-      { power: 1.2 },
-      '1.18× → 1.42× impact',
-    ],
-    [
+    ),
+    major(
+      'PB-P5',
+      'Hammer Mode',
+      'Maintain contact for one second to engage full hammer force.',
+      { mechanic: 'hammer', sustainPower: 1.2 },
+      '+20% sustained force',
       'PB-P3',
-      'Hammer mode',
-      'Stay on one spot to hit much harder.',
-      { mechanic: 'hammer' },
-      '1s local contact → +30% power',
-      true,
-    ],
-    [
+    ),
+    ...micro(
+      'PB-S',
+      [
+        'Faster Motor I',
+        'Faster Motor II',
+        'High Speed Drive I',
+        'High Speed Drive II',
+      ],
+      'cycle',
+      1 / 1.05,
+      'Deliver 5% more strokes per second.',
       'PB-S1',
-      'Faster motor',
-      'Strike 15% faster.',
-      { cycle: 1 / 1.15 },
-      '1.00× → 1.15× strike rate',
-    ],
-    [
-      'PB-S2',
-      'High-speed drive',
-      'Strike another 15% faster.',
-      { cycle: 1 / 1.15 },
-      '1.15× → 1.32× strike rate',
-    ],
-    [
-      'PB-S3',
-      'Rapid start',
-      'Reach full striking speed much faster.',
+    ),
+    major(
+      'PB-S5',
+      'Rapid Start',
+      'Reach full motor speed 40% sooner.',
       { mechanic: 'rapid' },
       '1.0s → 0.6s motor ramp',
-      true,
-    ],
-    [
+      'PB-S3',
+    ),
+    ...micro(
+      'PB-C',
+      ['Steadier Bit I', 'Steadier Bit II'],
+      'steadiness',
+      0.7,
+      'Reduce physical bit drift and recoil by 30%.',
       'PB-C1',
-      'Precision bit',
-      'Choose a narrow bit that digs deeper.',
+    ),
+    major(
+      'PB-C3',
+      'Precision Bit',
+      'Choose a narrower bit for a deeper channel. Switch freely.',
       { mechanic: 'precisionBit' },
-      '−25% area · +35% center power',
-      true,
-    ],
-    [
-      'PB-C2',
-      'Wide bit',
-      'Choose a wide bit to clear more surface.',
+      'Narrower area · deeper channel',
+      'PB-C1',
+    ),
+    major(
+      'PB-C4',
+      'Wide Bit',
+      'Choose a wider bit for shallow clearing. Both bits stay available.',
       { mechanic: 'wideBit' },
-      '+35% area · −18% depth',
-      true,
-    ],
-    [
+      'Wide or precision · freely selectable',
+      'PB-C2',
+    ),
+    ...micro(
+      'PB-T',
+      ['Resonance I', 'Resonance II'],
+      'resonance',
+      1.15,
+      'Build local fracture resonance 15% faster while working.',
       'PB-T1',
-      'Resonance',
-      'Holding one area releases a fracture pulse.',
-      { mechanic: 'resonance' },
-      '12 local impacts → fracture pulse',
-    ],
-    [
+    ),
+    major(
+      'PB-T3',
+      'Debris Kick',
+      'Sustained strokes kick loose nearby weak fragments.',
+      { mechanic: 'debrisKick' },
+      'Sustained local breakaway',
       'PB-T2',
-      'Debris kick',
-      'Loose ice breaks away sooner while working.',
-      { detach: 1.45 },
-      '1.00× → 1.45× weak-ice reach',
-      true,
-    ],
+    ),
   ],
   thermal: [
-    [
+    ...micro(
+      'TH-P',
+      ['Hotter Heat I', 'Hotter Heat II', 'Focused Heat I', 'Focused Heat II'],
+      'power',
+      1.05,
+      'Melt 5% faster with either nozzle.',
       'TH-P1',
-      'Hotter flame',
-      'Melt ice 20% faster.',
-      { power: 1.2 },
-      '1.00× → 1.20× heat',
-    ],
-    [
-      'TH-P2',
-      'Focused heat',
-      'Melt another 25% faster.',
-      { power: 1.25 },
-      '1.20× → 1.50× heat',
-    ],
-    [
+    ),
+    major(
+      'TH-P5',
+      'White Hot',
+      'The precision nozzle concentrates a white-hot core.',
+      { mechanic: 'whiteHot', focusPower: 1.2 },
+      '+20% precision heat',
       'TH-P3',
-      'White hot',
-      'Focused heat becomes much stronger.',
-      { mechanic: 'whiteHot' },
-      'Precision heat: +30%',
-      true,
-    ],
-    [
+    ),
+    ...micro(
+      'TH-S',
+      ['Bigger Tank I', 'Bigger Tank II'],
+      'fuel',
+      1.05,
+      'Carry 5% more fuel.',
       'TH-S1',
-      'Bigger tank',
-      'Use the heat tool 25% longer.',
-      { fuel: 1.25 },
-      '75s → 94s fuel',
-    ],
-    [
-      'TH-S2',
-      'Efficient burn',
-      'Use 15% less fuel.',
-      { burn: 0.85 },
-      '100% → 85% fuel use',
-    ],
+    ),
     [
       'TH-S3',
-      'Rest refill',
-      'Your tank slowly refills while the tool is off.',
+      'Efficient Burn I',
+      'Use 5% less fuel per second.',
+      { burn: 0.95 },
+      '−5% fuel use',
+      false,
+      'TH-S2',
+    ],
+    [
+      'TH-S4',
+      'Efficient Burn II',
+      'Use another 5% less fuel per second.',
+      { burn: 0.95 },
+      '−5% fuel use',
+      false,
+      'TH-S2',
+    ],
+    major(
+      'TH-S5',
+      'Rest Refill',
+      'The tank slowly refills while you stop working.',
       { mechanic: 'refill' },
-      '+2 seconds of fuel each second',
-      true,
-    ],
-    [
-      'TH-C1',
-      'Fan nozzle',
-      'Unlock a wide heat mode.',
-      { mechanic: 'fan' },
-      'Precision / wide',
-      true,
-    ],
-    [
+      '+2 fuel per second at rest',
+      'TH-S3',
+    ),
+    ...micro(
+      'TH-C',
+      ['Wider Heat I', 'Wider Heat II'],
+      'area',
+      1.05,
+      'Heat 5% more area with either nozzle.',
       'TH-C2',
-      'Wider fan',
-      'Wide heat covers 20% more area.',
-      { area: 1.2 },
-      '1.00× → 1.20× wide area',
-    ],
-    [
+    ),
+    major(
       'TH-C3',
-      'Stronger wide heat',
-      'Wide heat melts much deeper.',
-      { mechanic: 'wideHeat' },
-      '52% → 80% useful power',
-      true,
+      'Fan Nozzle',
+      'Unlock a broad fan for shallow surface clearing.',
+      { mechanic: 'fan' },
+      'Precision or wide heat',
+      'TH-C1',
+    ),
+    [
+      'TH-C4',
+      'Wider Fan',
+      'Spread the wide nozzle over 8% more area.',
+      { wideArea: 1.08 },
+      '+8% wide area',
+      false,
+      'TH-C2',
     ],
+    major(
+      'TH-C5',
+      'Stronger Wide Heat',
+      'A reinforced nozzle keeps more heat in the fan.',
+      { mechanic: 'widePower' },
+      'Wide heat: 80% precision power',
+      'TH-C3',
+    ),
     [
       'TH-T1',
-      'Heat stays longer',
-      'Ice keeps melting after you move.',
-      { afterheat: 1, mechanic: 'afterheat' },
-      'Moving away leaves stored heat',
-      true,
+      'Heat Stays I',
+      'Warm ice keeps melting briefly after you move away.',
+      { afterheat: 0.65 },
+      'Lingering local heat',
+      false,
+      'TH-T1',
     ],
     [
       'TH-T2',
-      'Stored heat',
-      'Lingering heat becomes 60% stronger.',
-      { afterheat: 1.6 },
-      '1.00× → 1.60× stored heat',
+      'Heat Stays II',
+      'Retain 10% more lingering heat.',
+      { afterheat: 1.1 },
+      '+10% lingering heat',
+      false,
+      'TH-T1',
     ],
     [
       'TH-T3',
-      'Heat echo',
-      'Hot ice releases one final wave of heat.',
-      { mechanic: 'echo' },
-      'One extra melt wave after 0.4s',
-      true,
+      'Stored Heat',
+      'Retain 15% more lingering heat.',
+      { afterheat: 1.15 },
+      '+15% lingering heat',
+      false,
+      'TH-T2',
     ],
+    major(
+      'TH-T4',
+      'Heat Echo',
+      'Leaving a hot spot releases one delayed pulse. It cannot chain.',
+      { mechanic: 'echo' },
+      'One extra melt pulse after 0.4s',
+      'TH-T3',
+    ),
   ],
 };
-// Authored directions and bends give each tool its own silhouette. Each branch
-// owns a sector; links end outside hit targets and never cross another node.
-const angles: Record<MajorTool, number[]> = {
-  hand: [-148, -54, 28, 116],
-  pick: [-127, -29, 61, 164],
-  heavy: [-165, -72, 37, 128],
-  sledge: [-137, -44, 53, 154],
-  breaker: [-160, -63, 21, 112],
-  thermal: [-126, -22, 70, 161],
+// Individual workshop maps, authored in root-relative coordinates. Compact
+// chisel fork, balanced pick, broad heavy pick, swept sledge, offset mechanical
+// breaker and flowing thermal crown. Progression IDs and saved ownership stay stable.
+const layouts: Record<MajorTool, Record<string, [number, number][]>> = {
+  hand: {
+    P: [
+      [-112, -60],
+      [-197, -139],
+    ],
+    S: [
+      [74, -111],
+      [162, -166],
+    ],
+    C: [
+      [112, 52],
+      [206, 118],
+    ],
+    T: [
+      [-68, 111],
+      [-147, 195],
+    ],
+  },
+  pick: {
+    P: [
+      [-105, -85],
+      [-194, -161],
+      [-244, -274],
+    ],
+    S: [
+      [86, -104],
+      [186, -154],
+      [293, -222],
+    ],
+    C: [
+      [121, 62],
+      [213, 140],
+    ],
+    T: [
+      [-94, 97],
+      [-185, 185],
+    ],
+  },
+  heavy: {
+    P: [
+      [-148, -28],
+      [-273, -88],
+      [-367, -173],
+    ],
+    S: [
+      [-28, -133],
+      [52, -226],
+      [172, -278],
+    ],
+    C: [
+      [152, 20],
+      [284, 75],
+    ],
+    T: [
+      [-51, 137],
+      [-167, 229],
+    ],
+  },
+  sledge: {
+    P: [
+      [-130, -85],
+      [-270, -109],
+      [-362, -209],
+    ],
+    S: [
+      [47, -142],
+      [154, -225],
+    ],
+    C: [
+      [145, 39],
+      [268, 120],
+    ],
+    T: [
+      [-65, 143],
+      [-33, 283],
+      [103, 344],
+    ],
+  },
+  breaker: {
+    P: [
+      [-128, -75],
+      [-226, -155],
+      [-226, -275],
+    ],
+    S: [
+      [28, -139],
+      [127, -216],
+      [245, -216],
+    ],
+    C: [
+      [137, 63],
+      [236, 143],
+    ],
+    T: [
+      [-68, 127],
+      [-167, 206],
+    ],
+  },
+  thermal: {
+    P: [
+      [-115, -95],
+      [-168, -216],
+      [-107, -327],
+    ],
+    S: [
+      [60, -137],
+      [179, -199],
+      [302, -176],
+    ],
+    C: [
+      [139, 48],
+      [235, 142],
+      [237, 271],
+    ],
+    T: [
+      [-85, 131],
+      [-210, 171],
+      [-319, 102],
+    ],
+  },
 };
+// Longer roots grow into branches rather than rows. Extra bends are authored per tool.
+const tips: Record<MajorTool, Record<string, [number, number][]>> = {
+  hand: {
+    P: [
+      [-300, -182],
+      [-368, -281],
+      [-482, -308],
+    ],
+    S: [
+      [264, -222],
+      [307, -334],
+    ],
+    C: [
+      [292, 210],
+      [410, 240],
+    ],
+    T: [[-250, 269]],
+  },
+  pick: {
+    P: [
+      [-352, -322],
+      [-407, -432],
+    ],
+    S: [
+      [322, -344],
+      [434, -396],
+    ],
+    C: [
+      [328, 175],
+      [407, 273],
+    ],
+    T: [[-299, 225]],
+  },
+  heavy: {
+    P: [
+      [-397, -300],
+      [-509, -363],
+    ],
+    S: [
+      [289, -310],
+      [347, -429],
+    ],
+    C: [
+      [378, 169],
+      [507, 186],
+    ],
+    T: [[-284, 293]],
+  },
+  sledge: {
+    P: [
+      [-476, -256],
+      [-509, -383],
+    ],
+    S: [
+      [274, -260],
+      [332, -384],
+    ],
+    C: [
+      [382, 176],
+      [431, 299],
+    ],
+    T: [[209, 410]],
+  },
+  breaker: {
+    P: [
+      [-343, -326],
+      [-372, -446],
+    ],
+    S: [
+      [308, -323],
+      [426, -342],
+    ],
+    C: [
+      [324, 233],
+      [447, 243],
+    ],
+    T: [[-283, 245]],
+  },
+  thermal: {
+    P: [
+      [-172, -435],
+      [-296, -452],
+    ],
+    S: [
+      [384, -269],
+      [360, -391],
+    ],
+    C: [
+      [344, 334],
+      [468, 302],
+    ],
+    T: [[-398, 195]],
+  },
+};
+for (const tool of TOOL_ORDER)
+  for (const branch of ['P', 'S', 'C', 'T'])
+    layouts[tool][branch].push(...tips[tool][branch]);
 const branchCodes: Record<string, Branch> = {
   P: 'power',
   S: 'speed',
@@ -552,63 +914,44 @@ const branchCodes: Record<string, Branch> = {
   T: 'technique',
 };
 export const TOOL_TREES = Object.fromEntries(
-  TOOL_ORDER.map((tool, ti) => [
+  TOOL_ORDER.map((tool) => [
     tool,
-    authored[tool].map(([id, name, description, effect, comparison, major]) => {
-      const code = id.split('-')[1],
-        rank = Number(code[1]),
-        branch = branchCodes[code[0]],
-        bi = ['power', 'speed', 'control', 'technique'].indexOf(branch);
-      const angle =
-        ((angles[tool][bi] +
-          (rank === 2
-            ? ti % 2
-              ? 12
-              : -12
-            : rank === 3
-              ? bi % 2
-                ? -8
-                : 8
-              : 0)) *
-          Math.PI) /
-        180;
-      const radius = [0, 120, 225, 335][rank];
-      const ratio =
-        rank === 1
-          ? major
-            ? 0.35
-            : 0.25
-          : rank === 2
-            ? major
-              ? 1.1
-              : 0.6
-            : major
-              ? 1.9
-              : 0.85;
-      return {
-        id,
-        toolId: tool,
-        branch,
-        rank,
-        parentIds: rank === 1 ? [] : [id.slice(0, -1) + (rank - 1)],
-        x: 800 + Math.cos(angle) * radius,
-        y: 800 + Math.sin(angle) * radius,
-        name,
-        description,
-        effect,
-        comparison,
-        major: !!major,
-        cost:
-          id === 'HC-S1'
-            ? 25
-            : Math.max(25, Math.round((NODE_BUDGET[tool] * ratio) / 25) * 25),
-      };
-    }),
+    authored[tool].map(
+      ([id, name, description, effect, comparison, major, glyph]) => {
+        const code = id.split('-')[1],
+          rank = Number(code[1]),
+          branch = branchCodes[code[0]];
+        const [x, y] = layouts[tool][code[0]][rank - 1];
+        return {
+          id,
+          toolId: tool,
+          branch,
+          rank,
+          parentIds: rank === 1 ? [] : [id.slice(0, -1) + (rank - 1)],
+          x: MAP.rootX + x,
+          y: MAP.rootY + y,
+          name,
+          description,
+          effect,
+          comparison,
+          glyph: glyph ?? id,
+          major: !!major,
+          cost: nodePrice(tool, rank, !!major, id),
+        };
+      },
+    ),
   ]),
 ) as Record<MajorTool, ToolNode[]>;
 export const ALL_TOOL_NODES = TOOL_ORDER.flatMap((t) => TOOL_TREES[t]);
 export function nodeState(node: ToolNode, owned: string[]) {
   if (owned.includes(node.id)) return 'purchased';
+  const frontier = Math.max(
+    0,
+    ...TOOL_TREES[node.toolId]
+      .filter((n) => n.branch === node.branch && owned.includes(n.id))
+      .map((n) => n.rank),
+  );
+  if (node.rank > frontier + 3) return 'hidden';
   if (node.parentIds.every((id) => owned.includes(id))) return 'available';
   const parent = TOOL_TREES[node.toolId].find((n) =>
     node.parentIds.includes(n.id),
@@ -631,6 +974,16 @@ export function toolEffects(owned: string[]) {
     fuel: 1,
     burn: 1,
     afterheat: 0,
+    side: 1,
+    sideDepth: 1,
+    focusPower: 1,
+    sustainPower: 1,
+    thirdPower: 1,
+    steadiness: 1,
+    resonance: 1,
+    charge: 1,
+    wideArea: 1,
+    release: 1,
     mechanics: new Set<string>(),
   };
   for (const id of owned) {
@@ -658,4 +1011,42 @@ export function treeLink(node: ToolNode) {
     start = parent ? 43 : 53,
     end = 43;
   return `M ${a.x + (dx / d) * start} ${a.y + (dy / d) * start} L ${node.x - (dx / d) * end} ${node.y - (dy / d) * end}`;
+}
+
+export function nodeComparison(node: ToolNode, owned: string[]) {
+  if (node.major || node.effect.charge) return node.comparison;
+  const key = Object.keys(node.effect).find((k) => k !== 'mechanic') as
+    | Exclude<keyof NodeEffect, 'mechanic'>
+    | undefined;
+  if (!key) return node.comparison;
+  const prior = new Set(owned.filter((id) => id !== node.id));
+  // Locked previews include the prerequisites needed to reach that fitting.
+  for (const n of TOOL_TREES[node.toolId])
+    if (n.branch === node.branch && n.rank < node.rank) prior.add(n.id);
+  const f = toolEffects([...prior]);
+  let before = f[key],
+    after = (before || 1) * (node.effect[key] as number);
+  if (key === 'cycle') {
+    before = 1 / before;
+    after = 1 / after;
+  }
+  const label: Record<string, string> = {
+    power: 'impact',
+    cycle: 'cadence',
+    center: 'center impact',
+    depth: 'depth',
+    area: 'area',
+    weak: 'damaged-ice impact',
+    support: 'support impact',
+    fuel: 'tank capacity',
+    burn: 'fuel use',
+    afterheat: 'lingering heat',
+    side: 'side control',
+    sideDepth: 'side depth',
+    steadiness: 'bit drift',
+    resonance: 'resonance gain',
+    wideArea: 'fan area',
+    release: 'thin restraint threshold',
+  };
+  return `${before.toFixed(2)}× → ${after.toFixed(2)}× ${label[key] ?? ''}`;
 }

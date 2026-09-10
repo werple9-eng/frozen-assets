@@ -1,4 +1,7 @@
 'use client';
+import { DeliveryComplete } from '@/components/game/delivery-complete';
+import { ConditionCue, type ConditionCueData } from '@/components/game/condition-cue';
+import { CustodyTag, type HandlingTag } from '@/components/game/custody-tag';
 import './campaign.css';
 import './motion.css';
 import './first-time.css';
@@ -6,9 +9,9 @@ import './landline.css';
 import './polish.css';
 import { PhoneDial } from '@/components/game/phone-dial';
 import { TonyPanel } from '@/components/game/tony-panel';
+import { IncomingCall } from '@/components/game/incoming-call';
 import { MenuHeader } from '@/components/game/menu-header';
 import { TutorialBoard } from '@/components/game/tutorial-board';
-import { TutorialUpgrade } from '@/components/game/tutorial-upgrade';
 import { TutorialDebug } from '@/components/game/tutorial-debug';
 import { tutorialControl } from '@/lib/game/tutorial-qa';
 import { tutorialCanWork, tutorialMessage } from '@/lib/game/tutorial';
@@ -99,7 +102,7 @@ export default function Home() {
   const upgradeFocus =
     menu === 'skills' && s.tutorial?.mode === 'task'
       ? s.tutorial.step === 8
-        ? '.continuous-node'
+        ? '[data-skill="HC-S1"]'
         : '.skill-screen .bench-return'
       : null;
   useEffect(() => {
@@ -527,6 +530,10 @@ export default function Home() {
             (document.activeElement as HTMLElement)?.click();
             return;
           }
+          if (m.settlement && !m.inTutorial && !menuRef.current) {
+            m.skipSettlement();
+            return;
+          }
           if (m.phoneRinging && !menuRef.current) {
             phone();
             return;
@@ -801,6 +808,11 @@ export default function Home() {
   );
   const comfortClass = `${s.settings.largeUI ? 'large-ui' : ''} ${s.settings.reducedMotion ? 'reduced-motion' : ''}`;
   const teaching = !!s.tutorial && s.tutorial.stage !== 'done';
+  const recoveryCondition = s as typeof s & {
+    conditionCue?: ConditionCueData | null;
+    conditionRisk?: number;
+    handlingTag?: HandlingTag | null;
+  };
   const guide =
     teaching && s.tutorial?.message ? (
       <TonyPanel
@@ -820,7 +832,7 @@ export default function Home() {
       data-menu={menu || 'bench'}
       data-tutorial={teaching ? s.tutorial?.step : undefined}
       data-tutorial-stage={teaching ? s.tutorial?.stage : undefined}
-      className={`game-shell ${comfortClass} ${rotate ? 'rotation-mode' : ''}`}
+      className={`game-shell ${comfortClass} ${rotate ? 'rotation-mode' : ''} ${!menu && !teaching && (recoveryCondition.conditionRisk ?? 0) > 0.05 ? 'condition-risk' : ''}`}
     >
       <div className="scene" ref={host} />
       <div className="phone-focus" aria-hidden="true" />
@@ -858,12 +870,11 @@ export default function Home() {
               />
             ))}
       {!menu && s.phone.ringing && (
-        <div className="incoming-call" data-hud>
-          <small>{teaching ? 'CURRENT TASK' : 'INCOMING CALL'}</small>
-          <TactileButton onClick={() => action((m) => m.answerPhone())}>
-            Pick up the phone <kbd>P</kbd>
-          </TactileButton>
-        </div>
+        <IncomingCall
+          call={s.campaign?.call}
+          tutorial={teaching}
+          onAnswer={() => action((m) => m.answerPhone())}
+        />
       )}
       {!menu && teaching && s.tutorial?.task && !s.phone.ringing && (
         <aside className="current-task" data-hud>
@@ -1047,7 +1058,7 @@ export default function Home() {
             </TactileButton>
           </div>
         )}
-        <Presence show={!rotated && !teaching} className="interaction-hint">
+        <Presence show={!rotated && !teaching && !recoveryCondition.handlingTag} className="interaction-hint">
           <strong>
             {s.thermal
               ? 'Hold on ice to melt.'
@@ -1065,12 +1076,12 @@ export default function Home() {
         </Presence>
         <div className="tool-controls" data-hud>
           {s.campaign?.selected === 'breaker' &&
-            s.nodes.breaker.includes('PB-C1') && (
+            s.nodes.breaker.includes('PB-C3') && (
               <fieldset className="nozzle-switch" aria-label="Breaker bit">
                 {(['standard', 'precision', 'wide'] as const)
                   .filter(
                     (bit) =>
-                      bit !== 'wide' || s.nodes.breaker.includes('PB-C2'),
+                      bit !== 'wide' || s.nodes.breaker.includes('PB-C4'),
                   )
                   .map((bit) => (
                     <TactileButton
@@ -1146,6 +1157,16 @@ export default function Home() {
           />
         </>
       )}
+      {!menu && !teaching && recoveryCondition.conditionCue && (
+        <ConditionCue
+          key={`${recoveryCondition.conditionCue.id}-${recoveryCondition.conditionCue.grade}-${recoveryCondition.conditionCue.until}`}
+          cue={recoveryCondition.conditionCue}
+          getScene={() => scene.current}
+        />
+      )}
+      {!menu && !teaching && !s.liveCall && !s.phone.ringing && !s.settlement && recoveryCondition.handlingTag && (
+        <CustodyTag tag={recoveryCondition.handlingTag} />
+      )}
       {rewards.map((r) => (
         <div
           key={r.id}
@@ -1168,7 +1189,19 @@ export default function Home() {
           <i />
         </div>
       ))}
-      {s.settlement && !menu && (
+      {s.settlement && !teaching && !menu && (
+        <DeliveryComplete
+          settlement={s.settlement}
+          remaining={s.settlementTime}
+          money={s.money}
+          nodes={s.nodes}
+          owned={s.campaign?.tools ?? []}
+          revealed={s.revealedTools}
+          advance={() => action((m) => m.skipSettlement())}
+          sound={() => scene.current?.audio.sound('delivery')}
+        />
+      )}
+      {s.settlement && teaching && !menu && (
         <aside className="settlement" aria-label="Recovery settlement">
           <small>{s.settlement.name} · SETTLED</small>
           <div>
@@ -1217,7 +1250,15 @@ export default function Home() {
             </div>
           </header>
           {s.campaign && (
-            <Phone state={s.campaign} tutorial={s.tutorial ?? undefined} />
+            <Phone
+              state={s.campaign}
+              tutorial={s.tutorial ?? undefined}
+              onInspect={(id) =>
+                action((m) => {
+                  if (m.campaign?.inspectEvidence(id)) m.onSave();
+                })
+              }
+            />
           )}
           <TactileButton
             className="bench-return"
@@ -1246,7 +1287,7 @@ export default function Home() {
           initialFocus={() =>
             teaching
               ? document.querySelector<HTMLElement>(
-                  '.tony-continue,.continuous-node:not(:disabled),.skill-screen .bench-return',
+                  '.tony-continue,[data-skill="HC-S1"],.skill-screen .bench-return',
                 )
               : true
           }
@@ -1255,59 +1296,54 @@ export default function Home() {
         >
           <section className="skill-plate">
             <MenuHeader screen="Upgrades" subtitle="" />
-            {teaching && s.tutorial ? (
-              <TutorialUpgrade
-                owned={s.tutorial.continuous}
-                ready={s.tutorial.step === 8 && s.tutorial.mode === 'task'}
-                money={s.money}
-                buy={() => game.current?.buyContinuous() ?? false}
-              />
-            ) : (
-              <SkillTree
-                key={requestedTool}
-                requestedTool={requestedTool}
-                savedViews={treeView}
-                remember={(tool, view) => {
-                  setTreeView((previous) => {
-                    const views = { ...previous, [tool]: view };
-                    if (!testing) {
-                      try {
-                        localStorage.setItem(
-                          TREE_VIEW_KEY,
-                          JSON.stringify(views),
-                        );
-                      } catch {
-                        /* Keep the session view. */
-                      }
+            <SkillTree
+              key={requestedTool}
+              requestedTool={teaching ? 'hand' : requestedTool}
+              savedViews={treeView}
+              remember={(tool, view) => {
+                setTreeView((previous) => {
+                  const views = { ...previous, [tool]: view };
+                  if (!testing) {
+                    try {
+                      localStorage.setItem(
+                        TREE_VIEW_KEY,
+                        JSON.stringify(views),
+                      );
+                    } catch {
+                      /* Keep the session view. */
                     }
-                    return views;
-                  });
-                }}
-                equipment={
-                  s.campaign
-                    ? {
-                        block: s.campaign.block,
-                        owned: s.campaign.tools,
-                        revealed: s.revealedTools,
-                        selected: s.campaign.selected,
-                        buy: (id) => game.current?.buyTool(id) ?? false,
-                        equip: (id) => game.current?.selectTool(id) ?? false,
-                      }
-                    : undefined
-                }
-                nodes={s.nodes}
-                money={s.money}
-                canPurchase={s.canPurchase}
-                purchase={(id) => {
-                  const m = game.current;
-                  if (!m) return false;
-                  scene.current?.audio.init();
-                  const ok = m.purchaseNode(id, Date.now());
-                  m.emit();
-                  return ok;
-                }}
-              />
-            )}
+                  }
+                  return views;
+                });
+              }}
+              equipment={
+                s.campaign
+                  ? {
+                      block: s.campaign.block,
+                      owned: s.campaign.tools,
+                      revealed: s.revealedTools,
+                      selected: s.campaign.selected,
+                      buy: (id) => game.current?.buyTool(id) ?? false,
+                      equip: (id) => game.current?.selectTool(id) ?? false,
+                    }
+                  : undefined
+              }
+              nodes={s.nodes}
+              money={s.money}
+              canPurchase={
+                teaching
+                  ? s.tutorial?.step === 8 && s.tutorial.mode === 'task'
+                  : s.canPurchase
+              }
+              purchase={(id) => {
+                const m = game.current;
+                if (!m) return false;
+                scene.current?.audio.init();
+                const ok = m.purchaseNode(id, Date.now());
+                m.emit();
+                return ok;
+              }}
+            />
             {menu === 'skills' && guide}
             <footer className="screen-footer">
               <TactileButton
@@ -1595,10 +1631,13 @@ export default function Home() {
             className="bench-return"
             onClick={() =>
               s.campaign && !s.campaign.read.includes('epilogue')
-                ? (() => {
-                    action((m) => m.hangUp());
-                    openMenu('phone');
-                  })()
+                ? action((m) => {
+                    m.hangUp();
+                    m.campaign?.ensureEpilogue();
+                    m.campaign?.deliver();
+                    scene.current?.phoneOrigin();
+                    m.answerPhone();
+                  })
                 : action((m) => m.continuePlaying())
             }
           >

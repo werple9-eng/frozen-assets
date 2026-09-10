@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Campaign, demoBoundary } from '../lib/game/campaign';
-import { STORY, BLOCKS, TOOLS } from '../lib/game/campaign-content';
+import { STORY, TOOLS, blockSpec } from '../lib/game/campaign-content';
+import { LEGACY_V2_BLOCKS as BLOCKS } from '../lib/game/legacy-layouts';
 import { campaignField, campaignLoot } from '../lib/game/campaign-layout';
 import { GameModel } from '../lib/game/model';
 import { SKILLS, TREE, NODE } from '../lib/game/skills';
@@ -14,13 +15,23 @@ import {
 const tick = (m: GameModel, s: number) => {
   for (let i = 0; i < s * 60; i++) m.update(1 / 60, null);
 };
-void test('32 authored blocks escalate scale without increasing scalar ice health', () => {
+function answerCalls(model: GameModel) {
+  for (let budget = STORY.length * 12; budget > 0; budget--) {
+    if (model.toolNotice) model.dismissToolNotice();
+    if (!model.campaign!.state.call) model.campaign!.deliver();
+    if (model.phoneRinging) model.answerPhone();
+    if (!model.liveCall) return;
+    assert.equal(model.advanceCall(), true);
+  }
+  assert.fail('Call queue did not drain within the authored message budget');
+}
+void test('the historical 32-block layout remains compatible without scalar ice health inflation', () => {
   assert.equal(BLOCKS.length, 32);
   assert.equal(new Set(BLOCKS.map((b) => b.id)).size, 32);
   for (let b = 0; b < 32; b++) {
-    const field = campaignField(b);
+    const field = campaignField(b, 0, undefined, 2);
     assert.ok(field.values.every((v) => v <= 1));
-    const loot = campaignLoot(b);
+    const loot = campaignLoot(b, 0, 2);
     assert.ok(loot.length >= 2);
     assert.equal(new Set(loot.map((t) => t.id)).size, loot.length);
     assert.ok(
@@ -36,8 +47,8 @@ void test('32 authored blocks escalate scale without increasing scalar ice healt
   assert.equal(BLOCKS[31].phases, 3);
   for (let b = 0; b < 32; b++)
     for (let phase = 1; phase < BLOCKS[b].phases; phase++) {
-      const f = campaignField(b, phase),
-        lots = campaignLoot(b, phase);
+      const f = campaignField(b, phase, undefined, 2),
+        lots = campaignLoot(b, phase, 2);
       assert.ok(
         lots.every((t) => !f.canRelease(t)),
         `Unsupported inner reward ${b}/${phase}`,
@@ -78,21 +89,55 @@ void test('quick primary clicks register once; cancellation prevents deferred st
   m.update(0.5, point);
   assert.equal(sum(), after);
 });
-void test('optional ring can remain frozen while the main shipment completes', () => {
+void test('historical layout2 retains the optional ring behavior while migrating its active delivery', () => {
   const m = new GameModel();
+  m.campaign!.state.layoutVersion = 2;
   m.round = 7;
   m.campaign!.state.block = 7;
   m.campaign!.state.phase = BLOCKS[7].phases - 1;
-  m.field = campaignField(7, m.campaign!.state.phase);
-  m.loot = campaignLoot(7, m.campaign!.state.phase);
+  m.field = campaignField(7, m.campaign!.state.phase, undefined, 2);
+  m.loot = campaignLoot(7, m.campaign!.state.phase, 2);
   for (const t of m.loot)
     if (t.story !== 'ring') {
       m.credit(t);
       t.state = 'collected';
     }
   tick(m, 4);
+  assert.equal(m.round, 7);
+  m.skipSettlement();
+  tick(m, 0.5);
   assert.equal(m.round, 8);
   assert.ok(!m.campaign!.state.objects.includes('ring'));
+});
+void test('the new eighth delivery cannot settle until Tony’s ring has physically recovered', () => {
+  const m = new GameModel(),
+    c = m.campaign!;
+  m.round = c.state.block = 7;
+  c.state.phase = blockSpec(7, 3).phases - 1;
+  c.state.pending = [];
+  m.field = campaignField(7, c.state.phase, undefined, 3);
+  m.loot = campaignLoot(7, c.state.phase, 3);
+  m.field.carveLoot(m.loot);
+  const ring = m.loot.find((item) => item.story === 'ring');
+  assert.ok(ring);
+  assert.equal(m.qualityEnabled, true);
+  for (const item of m.loot)
+    if (item !== ring) {
+      m.credit(item);
+      item.state = 'collected';
+    }
+  tick(m, 3);
+  assert.equal(ring.state, 'embedded');
+  assert.equal(m.settlement, null);
+  assert.equal(c.state.settled, false);
+  assert.equal(c.state.objects.includes('ring'), false);
+  m.field.values.fill(0);
+  m.field.dirty = true;
+  tick(m, 3);
+  assert.equal(ring.state, 'collected');
+  assert.ok(c.state.objects.includes('ring'));
+  assert.ok(c.state.flags.includes('ch2.ring'));
+  assert.ok(m.settlement);
 });
 void test('campaign restore rejects inconsistent balances and block indices', () => {
   const raw = JSON.parse(new GameModel().serialize());
@@ -144,22 +189,30 @@ void test('story queues during striking, persists through reload, delivers at qu
   restored.trigger('GAME_START');
   assert.equal(restored.state.pending.length, 0);
 });
-void test('commission changes at evidence recovery, locks each settlement rate, final vault is free', () => {
+void test('commission changes only after calls and the final Vault is waived after its ledger call', () => {
   const c = new Campaign();
   assert.equal(c.credit(210, 'a'), 185);
   assert.equal(c.credit(210, 'a'), 0);
   assert.equal(c.state.blockFee, 25);
   c.state.block = 17;
   c.collect('log');
-  assert.equal(c.state.commission, 8);
+  assert.equal(c.state.commission, 12);
   assert.equal(c.rate, 12);
+  assert.equal(c.openPhone(), 9);
+  assert.equal(c.state.commission, 8);
+  assert.equal(c.rate, 8);
+  assert.equal(c.state.blockFee, 16);
   c.next();
   assert.equal(c.rate, 8);
   assert.equal(c.credit(100, 'b'), 92);
   c.state.block = 30;
   c.next();
+  assert.equal(c.rate, 8);
+  assert.equal(c.credit(100, 'c'), 92);
+  c.collect('ledger');
+  assert.equal(c.openPhone(), 8);
   assert.equal(c.rate, 0);
-  assert.equal(c.credit(100, 'c'), 100);
+  assert.equal(c.credit(100, 'd'), 100);
 });
 void test('finale cannot trigger early; epilogue and contracts require completed ledger recovery', () => {
   const c = new Campaign();
@@ -170,7 +223,10 @@ void test('finale cannot trigger early; epilogue and contracts require completed
   c.state.block = 31;
   c.collect('ledger');
   assert.ok(c.state.flags.includes('ch5.recovered'));
-  c.finish();
+  assert.equal(c.finish(), false);
+  assert.equal(c.state.complete, false);
+  c.openPhone();
+  assert.equal(c.finish(), true);
   assert.ok(c.state.complete);
   assert.equal(c.startContracts(), false);
   c.openPhone();
@@ -231,6 +287,8 @@ void test('old prototype saves preserve active ice, money, upgrades and access t
   old.upgrades.heat = 4;
   const raw = JSON.parse(old.serialize());
   raw.version = 3;
+  raw.ice = Array.from(old.field.values);
+  delete raw.field;
   const m = new GameModel(JSON.stringify(raw));
   assert.equal(m.saveStatus, 'saved');
   assert.equal(m.money, 240);
@@ -258,17 +316,22 @@ void test('campaign save retains active phase, collections, queued story and set
   assert.ok(copy.campaign!.state.objects.includes('tag'));
   assert.equal(copy.credit(copy.loot[0]), false);
 });
-void test('all 32 blocks and three vault phases settle once and reach coherent postgame', () => {
+void test('all 32 deliveries and authored Vault phases settle once after their physical landings and calls', () => {
   const m = new GameModel();
   let safety = 0;
   while (m.phase !== 'completed' && safety++ < 200) {
     m.field.values.fill(0);
     m.field.dirty = true;
     tick(m, 5);
+    answerCalls(m);
+    tick(m, 5);
+    m.skipSettlement();
+    tick(m, 1);
   }
   assert.equal(m.phase, 'completed');
   assert.equal(m.round, 31);
   assert.ok(m.campaign!.state.objects.includes('ledger'));
+  assert.ok(m.campaign!.state.read.includes('ch5.recovered'));
   assert.equal(m.campaign!.state.blockFee, 0);
   assert.ok(m.campaign!.state.objects.includes('tag'));
   assert.ok(m.campaign!.state.objects.includes('log'));

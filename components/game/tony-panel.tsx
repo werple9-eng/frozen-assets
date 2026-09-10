@@ -2,11 +2,14 @@
 import { useEffect, useEffectEvent, useState, useRef } from 'react';
 import { KineticText } from './motion';
 import { TactileButton } from './tactile';
+import '@/app/major-progression.css';
 
 export type TonyLine = {
   id: string;
   text: string;
   speaker?: string;
+  subtitle?: string;
+  institutional?: boolean;
   task?: string;
   waiting?: boolean;
 };
@@ -78,29 +81,43 @@ function Panel({
     };
   }, []);
   void timed; // Kept for compatibility with older presentation fixtures; calls are player paced.
+  const mercer = line.speaker?.toUpperCase().includes('MERCER'),
+    institutional =
+      line.institutional || mercer || line.speaker?.startsWith('BELLWETHER'),
+    speaker = mercer ? 'HELEN MERCER' : (line.speaker ?? 'TONY'),
+    subtitle =
+      line.subtitle ??
+      (mercer
+        ? 'BELLWETHER NATIONAL · ASSET PRESERVATION'
+        : institutional
+          ? 'ASSET PRESERVATION'
+          : 'ON THE LINE');
   return (
     <aside
       ref={panel}
-      className={`tony-panel live-dialogue ${line.speaker?.startsWith('BELLWETHER') ? 'bank-call' : ''}`}
+      className={`tony-panel live-dialogue ${institutional ? 'bank-call' : ''} ${mercer ? 'mercer-call' : ''}`}
       data-hud
       data-message={line.id}
+      data-speaker={mercer ? 'mercer' : institutional ? 'bank' : 'tony'}
       aria-live="polite"
     >
       <header>
         <strong>
-          <KineticText text={line.speaker ?? 'TONY'} delay={20} interval={42} />
+          <KineticText text={speaker} delay={20} interval={42} />
         </strong>
-        <span>
-          {line.speaker?.startsWith('BELLWETHER')
-            ? 'ASSET COMPLIANCE'
-            : 'ON THE LINE'}
-        </span>
+        <span>{subtitle}</span>
         <i />
       </header>
       <button
         className="tony-text-action"
         onClick={confirm}
-        aria-label="Read Tony message"
+        aria-label={
+          mercer
+            ? 'Read Helen Mercer message'
+            : institutional
+              ? 'Read Bellwether message'
+              : 'Read Tony message'
+        }
       >
         <span className="tony-text">
           <KineticText

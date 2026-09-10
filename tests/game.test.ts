@@ -87,6 +87,8 @@ void test('physical ice and treasure are enlarged without changing save topology
   assert.ok(Math.max(...xs) - Math.min(...xs) > 10.7);
   const oldSave = JSON.parse(g.serialize());
   oldSave.version = 3;
+  oldSave.ice = Array.from(g.field.values);
+  delete oldSave.field;
   oldSave.money = 35;
   oldSave.earned = 35;
   oldSave.ice[1000] = 0.61;
@@ -324,6 +326,13 @@ void test('save/load retains partial thaw, settings, mode and purchases', () => 
   assert.equal(h.mode, 'wide');
   assert.equal(h.settings.master, 0.22);
   assert.equal(h.field.remaining(), g.field.remaining());
+  assert.deepEqual(
+    h.field.values,
+    Float32Array.from(
+      g.field.values,
+      (value) => (value === 0.5 ? 127 : Math.round(value * 255)) / 255,
+    ),
+  );
   assert.ok(h.field.values.some((v) => v > 0 && v < 0.9));
   assert.equal(h.firing, false);
 });
@@ -346,6 +355,7 @@ void test('missing, invalid, old, NaN and malformed saves start safely', () => {
     JSON.stringify({ ...JSON.parse(new LegacyModel().serialize()), fuel: -1 }),
     JSON.stringify({
       ...JSON.parse(new LegacyModel().serialize()),
+      version: 4,
       ice: [1, 2],
     }),
   ]) {
@@ -447,6 +457,9 @@ void test('meshing follows the authoritative field and produces finite triangles
 void test('old equipment migrates once without reducing power, fuel, money or thaw', () => {
   const g = new LegacyModel();
   const raw = JSON.parse(g.serialize());
+  raw.version = 3;
+  raw.ice = Array.from(g.field.values);
+  delete raw.field;
   delete raw.progression;
   delete raw.toolUpgrades;
   raw.upgrades = { heat: 2, tank: 2, residual: 2, wide: 1 };

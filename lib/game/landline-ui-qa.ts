@@ -177,7 +177,9 @@ export async function tutorialUIAudit(s: GameScene) {
     );
     await next();
     await wait(100);
-    const node = document.querySelector<HTMLButtonElement>('.continuous-node');
+    const node = document.querySelector<HTMLButtonElement>(
+      '[data-skill="HC-S1"]',
+    );
     result.purchaseFocused = document.activeElement === node;
     result.purchaseFocusElement = document.activeElement?.outerHTML.slice(
       0,

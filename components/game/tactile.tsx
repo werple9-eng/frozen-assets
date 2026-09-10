@@ -89,6 +89,24 @@ export function TactileButton({
     const m = motion.current;
     if (m.frame) return;
     m.time = performance.now();
+    // Fixed motion envelope, measured before motion. Long labels keep their
+    // typography and use a smaller wave instead of escaping the button face.
+    const host = button.current,
+      surface = face.current;
+    const style = surface ? getComputedStyle(surface) : null;
+    const hostStyle = host ? getComputedStyle(host) : null;
+    const padding = Math.min(
+      parseFloat(style?.paddingTop || '0') +
+        parseFloat(hostStyle?.paddingTop || '0'),
+      parseFloat(style?.paddingBottom || '0') +
+        parseFloat(hostStyle?.paddingBottom || '0'),
+    );
+    const letterCount =
+      surface?.querySelectorAll('.kinetic-letter').length ?? 0;
+    const envelope = Math.max(
+      1,
+      Math.min(6, padding - 3, letterCount > 15 ? 3 : 6),
+    );
     const step = (now: number) => {
       const b = button.current,
         f = face.current;
@@ -122,13 +140,13 @@ export function TactileButton({
         const l = (m.letters[i] ||= new Spring(0, 320 + (i % 3) * 35, 15));
         const distance = Math.abs((i + 0.5) / letters.length - (m.px + 1) / 2);
         const target = m.hover
-          ? -Math.max(0, 1 - distance * 2.4) * (m.down ? -2 : 6)
+          ? -Math.max(0, 1 - distance * 2.4) * (m.down ? -1.5 : envelope)
           : 0;
         l.target = target;
         l.step(dt, reduce);
         el.style.transform = reduce
           ? 'none'
-          : `translateY(${Math.max(-8, Math.min(5, l.value))}px) rotate(${l.value * (i % 2 ? -0.1 : 0.1)}deg)`;
+          : `translateY(${Math.max(-envelope, Math.min(envelope * 0.65, l.value))}px) rotate(${l.value * (i % 2 ? -0.08 : 0.08)}deg)`;
         moving ||= l.moving;
       });
       if (moving) m.frame = requestAnimationFrame(step);

@@ -1,4 +1,6 @@
+import { confirmationSample, type ConfirmationKind } from './purchase-sound';
 import { TUNE } from './tuning';
+import { phoneRingSample, type PhoneRing } from './phone-call';
 export class GameAudio {
   ctx?: AudioContext;
   master?: GainNode;
@@ -22,6 +24,7 @@ export class GameAudio {
   uiPlayed = 0;
   uiSuppressed = 0;
   ringBuffer?: AudioBuffer;
+  institutionalRingBuffer?: AudioBuffer;
   ringSource?: AudioBufferSourceNode;
   stopRing() {
     try {
@@ -31,35 +34,21 @@ export class GameAudio {
     }
     this.ringSource = undefined;
   }
-  ring() {
+  ring(kind: PhoneRing = 'private') {
     if (!this.ctx || !this.master || this.muted || this.ctx.state !== 'running')
       return;
     const ctx = this.ctx;
-    if (!this.ringBuffer) {
-      this.ringBuffer = ctx.createBuffer(
-        1,
-        Math.ceil(ctx.sampleRate * 1.65),
-        ctx.sampleRate,
-      );
-      const data = this.ringBuffer.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        const t = i / ctx.sampleRate,
-          segment = t < 0.62 ? t : t - 0.94;
-        if (segment < 0 || segment > 0.62) continue;
-        const envelope =
-          Math.min(1, segment / 0.012) * Math.min(1, (0.62 - segment) / 0.04);
-        data[i] =
-          envelope *
-          (0.45 + 0.55 * Math.sin(t * 2 * Math.PI * 23) ** 2) *
-          (Math.sin(t * 2 * Math.PI * 480) * 0.18 +
-            Math.sin(t * 2 * Math.PI * 620) * 0.12 +
-            Math.sin(t * 2 * Math.PI * 960) * 0.035);
-      }
+    const bufferKey =
+      kind === 'institutional' ? 'institutionalRingBuffer' : 'ringBuffer';
+    if (!this[bufferKey]) {
+      const sample = phoneRingSample(ctx.sampleRate, kind);
+      this[bufferKey] = ctx.createBuffer(1, sample.length, ctx.sampleRate);
+      this[bufferKey]!.getChannelData(0).set(sample);
     }
     this.stopRing();
     const src = ctx.createBufferSource(),
       gain = ctx.createGain();
-    src.buffer = this.ringBuffer;
+    src.buffer = this[bufferKey]!;
     gain.gain.value = this.effects * 0.46;
     src.connect(gain);
     gain.connect(this.master);
@@ -230,20 +219,22 @@ export class GameAudio {
     room.start();
     this.sources.push(room);
     this.volume();
-    // Filtered jsfxr noise adds only a dry mechanical latch to purchase sounds.
-    // Wood resonances remain the common hover/press voice. Cache once per session.
-    void Promise.all(
-      [0, 1, 2].map(async (i) => {
-        const response = await fetch(`/sounds/latch-${i}.wav`);
-        if (!response.ok) throw new Error('Sound unavailable');
-        return ctx.decodeAudioData(await response.arrayBuffer());
-      }),
-    )
-      .then((buffers) => {
-        if (ctx.state !== 'closed') this.materials.set('latch', buffers);
-      })
-      .catch(() => {});
+    for (const kind of [
+      'purchase',
+      'unlock',
+      'tool-acquired',
+      'delivery',
+    ] as ConfirmationKind[]) {
+      const variants = Array.from({ length: 4 }, (_, i) => {
+        const samples = confirmationSample(ctx.sampleRate, kind, i);
+        const buffer = ctx.createBuffer(1, samples.length, ctx.sampleRate);
+        buffer.copyToChannel(samples, 0);
+        return buffer;
+      });
+      this.materials.set(kind, variants);
+    }
   }
+
   volume() {
     if (this.ctx && this.master)
       this.master.gain.setTargetAtTime(
@@ -252,16 +243,20 @@ export class GameAudio {
         0.025,
       );
   }
-  room(time: number, paused: boolean, entering: number) {
+  room(time: number, paused: boolean, entering: number, vaultPhase?: number) {
     if (!this.ctx || !this.ambience || !this.ambienceFilter) return;
     const compressor = time % 39 > 29;
     this.ambience.gain.setTargetAtTime(
-      (paused ? 0.018 : 0.036) * (1 - entering * 0.7) * (compressor ? 1.3 : 1),
+      (paused ? 0.012 : 0.036) *
+        (1 - entering * 0.7) *
+        (compressor ? 1.3 : 1) *
+        (vaultPhase === 4 ? 0.25 : 1 + (vaultPhase ?? 0) * 0.12),
       this.ctx.currentTime,
       0.25,
     );
     this.ambienceFilter.frequency.setTargetAtTime(
-      compressor ? 210 : 145,
+      (compressor ? 210 : 145) +
+        (vaultPhase === 4 ? -45 : (vaultPhase ?? 0) * 18),
       this.ctx.currentTime,
       0.5,
     );
@@ -329,14 +324,12 @@ export class GameAudio {
       if (kind === 'pick') this.physical('crack', 0.2);
       return;
     }
-    if (['purchase', 'unlock', 'unavailable'].includes(kind)) {
+    if (['purchase', 'unlock', 'tool-acquired', 'delivery'].includes(kind)) {
+      this.physical(kind, kind === 'purchase' ? 0.82 : 1);
+      return;
+    }
+    if (kind === 'unavailable') {
       this.ui(kind);
-      if (kind !== 'unavailable')
-        this.physical(
-          this.materials.has('latch') ? 'latch' : 'chip',
-          kind === 'unlock' ? 0.5 : 0.3,
-        );
-      if (kind === 'unlock') this.physical('gold', 0.27);
       return;
     }
     if (this.materials.has(kind)) {
@@ -423,6 +416,10 @@ export class GameAudio {
     };
   }
   ui(kind: string) {
+    if (['purchase', 'unlock', 'tool-acquired', 'delivery'].includes(kind)) {
+      this.sound(kind);
+      return;
+    }
     if (
       !this.ctx ||
       this.ctx.state !== 'running' ||
@@ -475,8 +472,10 @@ export class GameAudio {
     };
   }
   dispose() {
+    this.stopRing();
     this.fire(false, false);
     this.sources.forEach((s) => s.stop());
     void this.ctx?.close();
+    this.ringBuffer = this.institutionalRingBuffer = undefined;
   }
 }
