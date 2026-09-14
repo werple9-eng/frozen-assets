@@ -798,7 +798,7 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
     }
   };
 
-  const startLifetime = (iterations = 20) => {
+  const startLifetime = (iterations = 20, controlledFrames = false) => {
     const model = isolated(scene);
     if (running) throw Error('A major QA measurement is already running.');
     if (!Number.isInteger(iterations) || iterations < 1 || iterations > 20)
@@ -842,6 +842,24 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
           current = new GameScene(host, sample);
           audit.collecting(null);
           const beforeWarm = gpu(current);
+          let clock = performance.now();
+          const renderStep = () => {
+            if (!current) return;
+            cancelAnimationFrame(current.animation);
+            current.last = clock;
+            clock += 1000 / 60;
+            current.frame(clock);
+            cancelAnimationFrame(current.animation);
+          };
+          if (controlledFrames)
+            for (let frame = 0; frame < 180; frame++) {
+              renderStep();
+              if (
+                current.renderTimes.length >= 12 &&
+                !sample.field.dirtyChunks.size
+              )
+                break;
+            }
           const deadline = performance.now() + 4000;
           while (
             (current.renderTimes.length < 12 ||
@@ -865,8 +883,18 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
           sample.loot = [];
           current.syncField();
           const shellsCreated = current.phaseShells.length;
+          if (controlledFrames) renderStep();
           await wait(40, signal);
           if (i % 2) {
+            if (controlledFrames)
+              for (let frame = 0; frame < 180; frame++) {
+                renderStep();
+                if (
+                  !current.phaseShells.length &&
+                  !sample.field.dirtyChunks.size
+                )
+                  break;
+              }
             const drainedBy = performance.now() + 4000;
             while (
               (current.phaseShells.length > 0 ||
@@ -942,6 +970,9 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
           status: 'complete',
           result: {
             iterations,
+            clock: controlledFrames
+              ? 'controlled 60 Hz; not an FPS test'
+              : 'live RAF',
             parentBefore,
             parentAfter: gpu(scene),
             rows,

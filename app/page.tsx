@@ -16,6 +16,7 @@ import { IncomingCall } from '@/components/game/incoming-call';
 import { MenuHeader } from '@/components/game/menu-header';
 import { TutorialBoard } from '@/components/game/tutorial-board';
 import { TutorialDebug } from '@/components/game/tutorial-debug';
+import { QualityDebug } from '@/components/game/quality-debug';
 import { MECHANIC_NODE } from '@/lib/game/tool-trees';
 import { MUG_LINES, nextMugLine } from '@/lib/game/mug';
 import { GRAPHICS, GRAPHICS_LEVELS } from '@/lib/game/graphics';
@@ -112,19 +113,26 @@ export default function Home() {
   } | null>(null);
   const previousMilestone = useRef({ chapter: 0, tools: '', round: -1 });
   const upgradeFocus =
-    menu === 'skills' && s.tutorial?.mode === 'task'
-      ? s.tutorial.step === 8
-        ? '[data-skill="HC-S1"]'
-        : '.skill-screen .bench-return'
+    menu === 'skills' && s.tutorial?.stage !== 'done' && s.tutorial
+      ? s.tutorial.message
+        ? '.tony-continue'
+        : s.tutorial.step === 8
+          ? '[data-skill="HC-S1"]'
+          : '.bench-return'
       : null;
   useEffect(() => {
     if (!upgradeFocus) return;
-    const frame = requestAnimationFrame(() =>
-      document
-        .querySelector<HTMLButtonElement>(upgradeFocus)
-        ?.focus({ preventScroll: true }),
+    // The popup repairs focus on the next frame when Tony's button unmounts.
+    // Apply the lesson's destination after that repair, not in competition with it.
+    const frame = setTimeout(
+      () =>
+        document
+          .querySelector<HTMLElement>('.skill-screen')
+          ?.querySelector<HTMLButtonElement>(upgradeFocus)
+          ?.focus({ preventScroll: true }),
+      120,
     );
-    return () => cancelAnimationFrame(frame);
+    return () => clearTimeout(frame);
   }, [upgradeFocus]);
   useEffect(() => {
     if (s.tutorial?.stage !== 'chapter' || menu) return;
@@ -168,22 +176,6 @@ export default function Home() {
     const timeout = setTimeout(() => setMilestone(null), 3100);
     return () => clearTimeout(timeout);
   }, [milestone]);
-  useEffect(() => {
-    if (menu !== 'skills' || ![9, 10].includes(s.tutorial?.step ?? -1)) return;
-    // Let the dialog finish repairing focus after the previous message unmounts.
-    const focus = setTimeout(
-      () =>
-        document
-          .querySelector<HTMLElement>(
-            s.tutorial?.step === 9
-              ? '.skill-screen .tony-continue'
-              : '.skill-screen .bench-return',
-          )
-          ?.focus(),
-      80,
-    );
-    return () => clearTimeout(focus);
-  }, [menu, s.tutorial?.step]);
   useEffect(() => {
     let disposed = false,
       cleanup = () => {};
@@ -248,6 +240,8 @@ export default function Home() {
         void repository.current.put(activeSlot.current, m.serialize()).then(
           () => {
             m.saveStatus = 'saved';
+            if (menuRef.current === 'saves' && repository.current)
+              setSlots([...repository.current.data.slots]);
           },
           () => {
             m.saveStatus = 'unavailable';
@@ -317,6 +311,7 @@ export default function Home() {
         setRotated(engine.turntable.demonstrated);
       };
       const phone = () => {
+        if (menuRef.current || m.settlement || m.toolNotice) return;
         engine.messageBusy = false;
         engine.cancelInput();
         engine.phoneOrigin();
@@ -373,6 +368,9 @@ export default function Home() {
       const keys = (e: KeyboardEvent) => {
         if (
           e.defaultPrevented ||
+          e.ctrlKey ||
+          e.metaKey ||
+          e.altKey ||
           e.repeat ||
           (e.target as HTMLElement)?.closest('input,[role="slider"]')
         )
@@ -752,7 +750,8 @@ export default function Home() {
       t.mode === 'dialogue'
     )
       return;
-    if (next === null && activeSlot.current === null) next = 'saves';
+    if (next === null && activeSlot.current === null && !testing)
+      next = 'saves';
     if (next === 'saves' && repository.current) {
       game.current?.onSave();
       setSlots([...repository.current.data.slots]);
@@ -976,7 +975,10 @@ export default function Home() {
             slots={slots}
             active={slotIndex}
             returnToGame={started ? () => openMenu(null) : undefined}
-            launch={(index) => {
+            launch={async (index) => {
+              if (!repository.current) return;
+              if (activeSlot.current !== null) game.current?.onSave();
+              await repository.current.flush();
               const m = game.current,
                 saved = repository.current?.data.slots[index].raw;
               if (!m || !repository.current) return;
@@ -1012,17 +1014,24 @@ export default function Home() {
             }}
             remove={async (index) => {
               if (!repository.current) return;
-              await repository.current.clear(index);
-              if (activeSlot.current === index) {
-                activeSlot.current = null;
-                setStarted(false);
+              const wasActive = activeSlot.current === index;
+              // Blur/pagehide must not autosave the running model back into
+              // a slot while its clear operation is waiting for storage.
+              if (wasActive) activeSlot.current = null;
+              try {
+                await repository.current.clear(index);
+              } catch (error) {
+                if (wasActive) activeSlot.current = index;
+                throw error;
               }
+              if (wasActive) setStarted(false);
               setSlots([...repository.current.data.slots]);
             }}
           />
         </DialogContent>
       </Dialog>
       <DotCursor />
+      {testing && <QualityDebug scene={() => scene.current} />}
       {!menu && s.campaign && !teaching && (
         <>
           <div className="campaign-caption">
@@ -1281,9 +1290,12 @@ export default function Home() {
           }}
           initialFocus={() =>
             teaching
-              ? document.querySelector<HTMLElement>(
-                  '.tony-continue,[data-skill="HC-S1"],.skill-screen .bench-return',
-                )
+              ? (document.querySelector<HTMLElement>(
+                  '.skill-screen .tony-continue',
+                ) ??
+                document.querySelector<HTMLElement>(
+                  '.skill-screen [data-skill="HC-S1"]',
+                ))
               : true
           }
           unstyled

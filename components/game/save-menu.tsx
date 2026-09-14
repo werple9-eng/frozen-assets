@@ -12,20 +12,36 @@ export function SaveMenu({
 }: {
   slots: SaveSlot[];
   active: number;
-  launch: (index: number) => void;
+  launch: (index: number) => void | Promise<void>;
   remove: (index: number) => Promise<void>;
   restore: (index: number) => Promise<void>;
   returnToGame?: () => void;
 }) {
   const [selected, setSelected] = useState(active),
     [deleting, setDeleting] = useState<number | null>(null),
+    [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const run = async (operation: () => void | Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await operation();
+    } catch {
+      setError(
+        'The file could not be saved. Your recovery copy is retained. Try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="save-menu-body">
       <fieldset
         className="save-slot-list"
         aria-label="Choose a save slot"
         data-selection={selected}
+        disabled={busy}
       >
         {slots.map((slot, i) => {
           const summary = slotSummary(slot);
@@ -69,19 +85,25 @@ export function SaveMenu({
       <div className="save-actions">
         <TactileButton
           className="bench-return launch-recovery"
-          onClick={() => launch(selected)}
+          disabled={busy}
+          onClick={() => void run(() => launch(selected))}
         >
           {slots[selected].raw ? 'Continue recovery' : 'New game'}{' '}
           <span>→</span>
         </TactileButton>
         {returnToGame && (
-          <TactileButton className="save-back" onClick={returnToGame}>
+          <TactileButton
+            className="save-back"
+            disabled={busy}
+            onClick={returnToGame}
+          >
             Back to the bench
           </TactileButton>
         )}
         {slots[selected].raw && (
           <TactileButton
             className="restart-link"
+            disabled={busy}
             onClick={() => setDeleting(selected)}
           >
             Delete this file
@@ -91,21 +113,18 @@ export function SaveMenu({
       {!slots[selected].raw && slots[selected].backup && (
         <TactileButton
           className="restart-link"
-          onClick={async () => {
-            try {
-              await restore(selected);
-            } catch {
-              setError(
-                'This browser could not restore the file. The recovery copy is retained.',
-              );
-            }
-          }}
+          disabled={busy}
+          onClick={() => void run(() => restore(selected))}
         >
           Restore cleared file
         </TactileButton>
       )}
       {deleting !== null && (
-        <fieldset className="slot-confirm" aria-label="Confirm save deletion">
+        <fieldset
+          className="slot-confirm"
+          aria-label="Confirm save deletion"
+          disabled={busy}
+        >
           <div>
             <strong>Clear recovery file {deleting + 1}?</strong>
             <p>
@@ -118,16 +137,12 @@ export function SaveMenu({
           </TactileButton>
           <TactileButton
             className="delete-slot"
-            onClick={async () => {
-              try {
+            onClick={() =>
+              void run(async () => {
                 await remove(deleting);
                 setDeleting(null);
-              } catch {
-                setError(
-                  'This browser could not save the change. Your recovery copy is retained.',
-                );
-              }
-            }}
+              })
+            }
           >
             Clear file
           </TactileButton>

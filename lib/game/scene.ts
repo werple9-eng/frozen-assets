@@ -1178,6 +1178,9 @@ export class GameScene {
       if (
         this.model.paused ||
         ev.defaultPrevented ||
+        ev.ctrlKey ||
+        ev.metaKey ||
+        ev.altKey ||
         (ev.target as HTMLElement)?.closest(
           'input,[role="dialog"],[role="alertdialog"]',
         )

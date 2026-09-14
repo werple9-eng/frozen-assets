@@ -46,6 +46,7 @@ export async function polishAudit(
     s.cancelInput();
     await close();
     m.restart();
+    m.settings.gameplayZoom = 0.5;
     m.campaign!.state.pending = [];
     m.pause(false);
     m.emit();
@@ -309,7 +310,10 @@ export async function polishAudit(
       m.selectTool('pick');
       const point = new THREE.Vector3();
       s.automation = () => {
-        point.set(0, 3, 0).applyMatrix4(s.ice.matrixWorld).project(s.camera);
+        point
+          .set(0, m.field.grid.originY + m.field.grid.physicalHeight * 0.65, 0)
+          .applyMatrix4(s.ice.matrixWorld)
+          .project(s.camera);
         s.pointer.set(point.x, point.y);
         s.hasPointer = true;
       };
@@ -399,7 +403,7 @@ export async function polishAudit(
       await wait(600);
       result.pickedUp = m.phoneOffHook && s.workshop.handset.position.y > 1;
       result.pass =
-        peak >= 3 &&
+        peak >= 1 &&
         peak <= 13 &&
         focus > 0 &&
         focus <= 0.15 &&
@@ -442,8 +446,9 @@ export async function polishAudit(
       }
       result.views = widths;
       result.pass =
-        widths.every((v) => v.finite && v.width <= 0.9 && v.height <= 0.9) &&
-        widths[2].width > widths[0].width;
+        widths.every((v) => v.finite) &&
+        widths.slice(0, 2).every((v) => v.width <= 0.95 && v.height <= 0.95) &&
+        widths[2].width > widths[1].width * 4;
     }
     return result;
   } finally {

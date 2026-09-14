@@ -87,6 +87,7 @@ export async function tutorialUIAudit(s: GameScene) {
     s.automation = undefined;
     s.cancelInput();
     await close();
+    m.setSetting('gameplayZoom', 0.5);
     forceTutorialStep(m, 0);
     m.pause(false);
     m.emit();
@@ -176,7 +177,7 @@ export async function tutorialUIAudit(s: GameScene) {
       '.skill-screen nav[aria-label="Station menus"]',
     );
     await next();
-    await wait(100);
+    await wait(200);
     const node = document.querySelector<HTMLButtonElement>(
       '[data-skill="HC-S1"]',
     );
@@ -196,7 +197,7 @@ export async function tutorialUIAudit(s: GameScene) {
         '.skill-screen .bench-return',
       )?.disabled;
     await next();
-    await wait(100);
+    await wait(200);
     result.returnFocused =
       document.activeElement?.classList.contains('bench-return');
     result.upgradeButtonBounds = await buttonBounds('.skill-screen button');

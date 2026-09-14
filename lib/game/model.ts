@@ -934,7 +934,15 @@ export class GameModel {
     this.emit();
   }
   refill() {
-    if (this.phase !== 'playing') return false;
+    if (
+      this.phase !== 'playing' ||
+      !this.thermal ||
+      this.settlement ||
+      this.liveCall ||
+      this.dialing ||
+      this.toolNotice
+    )
+      return false;
     this.stop();
     this.phase = 'refilling';
     this.elapsed = 0;

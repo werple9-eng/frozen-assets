@@ -1431,7 +1431,12 @@ try {
   while (m.inTutorial && clock < 900) {
     const t = m.tutorial,
       message = tutorialMessage(t);
-    if (t.stage === 'board') {
+    if (m.settlement) {
+      if (m.settlementTime <= 1.6) {
+        addTime('inspection', assumptions.receiptInspectionSeconds);
+        m.skipSettlement();
+      }
+    } else if (t.stage === 'board') {
       addTime('inspection', 4);
       m.stampTutorial();
       m.finishTutorialBoard();

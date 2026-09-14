@@ -5,6 +5,7 @@ export type SaveSlot = { raw: string | null; updated: number; backup?: string };
 type Catalog = { version: 1; active: number; slots: SaveSlot[] };
 export const SLOT_KEY = 'frozen-assets-slots-v1';
 export class SaveSlots {
+  private pending: Promise<void> = Promise.resolve();
   data: Catalog = {
     version: 1,
     active: 0,
@@ -14,12 +15,18 @@ export class SaveSlots {
     private storage: SaveService,
     private legacy: SaveService,
   ) {}
+  flush() {
+    return this.pending;
+  }
   async load() {
     const raw = await this.storage.load();
     if (raw) {
       const parsed = JSON.parse(raw) as Catalog;
       if (
         parsed.version !== 1 ||
+        !Number.isInteger(parsed.active) ||
+        parsed.active < 0 ||
+        parsed.active > 2 ||
         parsed.slots?.length !== 3 ||
         !parsed.slots.every(
           (s) => s && (typeof s.raw === 'string' || s.raw === null),
@@ -29,50 +36,49 @@ export class SaveSlots {
           'Save catalog is damaged. Original recovery is preserved.',
         );
       this.data = parsed;
-      this.data.active = Math.max(
-        0,
-        Math.min(2, Math.trunc(parsed.active || 0)),
-      );
     } else {
       // Import once without changing the original key. It remains a recovery copy.
       this.data.slots[0].raw = await this.legacy.load();
     }
     return this.data;
   }
+  private transact(change: (before: Catalog) => Catalog) {
+    const operation = this.pending
+      .catch(() => {})
+      .then(async () => {
+        const next = change(this.data);
+        await this.storage.save(JSON.stringify(next));
+        this.data = next;
+      });
+    this.pending = operation;
+    return operation;
+  }
   async put(index: number, raw: string) {
     this.assertIndex(index);
-    const before = this.data,
-      slots = [...before.slots];
-    slots[index] = { ...slots[index], raw, updated: Date.now() };
-    const next = { ...before, active: index, slots };
-    this.data = next;
-    try {
-      await this.storage.save(JSON.stringify(next));
-    } catch (error) {
-      if (this.data === next) this.data = before;
-      throw error;
-    }
+    await this.transact((before) => {
+      const slots = [...before.slots];
+      slots[index] = { ...slots[index], raw, updated: Date.now() };
+      return { ...before, active: index, slots };
+    });
   }
   async clear(index: number) {
     this.assertIndex(index);
-    const before = this.data,
-      slots = [...before.slots],
-      slot = slots[index];
-    slots[index] = { raw: null, updated: 0, backup: slot.raw ?? slot.backup };
-    const next = { ...before, slots };
-    this.data = next;
-    try {
-      await this.storage.save(JSON.stringify(next));
-    } catch (error) {
-      if (this.data === next) this.data = before;
-      throw error;
-    }
+    await this.transact((before) => {
+      const slots = [...before.slots],
+        slot = slots[index];
+      slots[index] = { raw: null, updated: 0, backup: slot.raw ?? slot.backup };
+      return { ...before, slots };
+    });
   }
   async restore(index: number) {
     this.assertIndex(index);
-    const slot = this.data.slots[index];
-    if (slot.raw || !slot.backup) return;
-    await this.put(index, slot.backup);
+    await this.transact((before) => {
+      const slot = before.slots[index];
+      if (slot.raw || !slot.backup) return before;
+      const slots = [...before.slots];
+      slots[index] = { ...slot, raw: slot.backup, updated: Date.now() };
+      return { ...before, active: index, slots };
+    });
   }
   private assertIndex(index: number) {
     if (!Number.isInteger(index) || index < 0 || index > 2)

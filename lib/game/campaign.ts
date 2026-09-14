@@ -53,6 +53,7 @@ export type CampaignSave = {
   legacyBlock: boolean;
   settled: boolean;
   settledId?: string;
+  callCooldown?: number;
 };
 export type CallCompletion = {
   completed: boolean;
@@ -96,7 +97,6 @@ export class Campaign {
     settled: false,
   };
   quiet = 0;
-  private callCooldown = 0;
   lastDelivered?: string;
   onMilestone: (id: Milestone) => void = () => {};
   get block() {
@@ -158,13 +158,13 @@ export class Campaign {
     }
   }
   advanceQuiet(dt: number, busy: boolean) {
-    this.callCooldown = Math.max(0, this.callCooldown - dt);
+    this.state.callCooldown = Math.max(0, (this.state.callCooldown ?? 0) - dt);
     this.fileRoutineNotes();
     if (this.state.call) return false;
     this.quiet = busy ? 0 : this.quiet + dt;
     if (
       this.quiet < (this.state.complete ? 0.8 : 3) ||
-      (this.callCooldown > 0 && !this.state.complete) ||
+      (this.state.callCooldown > 0 && !this.state.complete) ||
       !this.state.pending.length
     )
       return false;
@@ -273,7 +273,7 @@ export class Campaign {
     this.state.read.push(id);
     this.state.pending = this.state.pending.filter((pending) => pending !== id);
     this.state.call = undefined;
-    this.callCooldown = 45;
+    this.state.callCooldown = 45;
     let refund = 0;
     if (commission !== undefined) {
       this.state.commission = commission;
@@ -548,6 +548,11 @@ export class Campaign {
     )
       throw Error('Premature ending');
     this.state = structuredClone(s);
+    this.quiet = 0;
+    if (this.state.callCooldown !== undefined)
+      this.state.callCooldown = Number.isFinite(this.state.callCooldown)
+        ? Math.max(0, Math.min(45, this.state.callCooldown))
+        : 0;
     this.state.storyEffects = [
       ...new Set([
         ...(this.state.storyEffects ?? []),

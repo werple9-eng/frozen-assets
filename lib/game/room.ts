@@ -82,7 +82,12 @@ export class WorkshopRoom {
     const paper = mat(0xb4ae8d, 0.97);
     const manila = mat(0xb39d76, 0.95);
     const red = mat(0x8d3d33, 0.9);
-    const ceramic = mat(0xd6d3c9, 0.42, 0.02, { clearcoat: 0.2 } as never);
+    const ceramic = new THREE.MeshPhysicalMaterial({
+      color: 0xd6d3c9,
+      roughness: 0.42,
+      metalness: 0.02,
+      clearcoat: 0.2,
+    });
     const coffee = mat(0x2b1c14, 0.35, 0.05);
     const lampMetal = mat(0x4b5358, 0.48, 0.55);
     const bulb = new THREE.MeshStandardMaterial({

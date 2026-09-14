@@ -30,33 +30,48 @@ const POSES = [
 ];
 // Local practice tool: measures rendered tool vertices against the actual hit
 // plane during rest, impact and return. No depth-test overrides are allowed.
-export async function contactAudit(s: GameScene) {
+export async function contactAudit(s: GameScene, controlledFrames = false) {
   const m = s.model as GameModel,
     saved = m.serialize();
   const rows: Record<string, unknown>[] = [],
     point = new THREE.Vector3();
+  let clock = performance.now();
   const wait = (ms: number, inspect?: () => void) =>
-    new Promise<void>((resolve) => {
-      const start = performance.now();
-      let frame = 0,
-        done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        cancelAnimationFrame(frame);
-        resolve();
-      };
-      const deadline = setTimeout(finish, ms + 100);
-      const sample = () => {
-        if (done) return;
-        inspect?.();
-        if (performance.now() - start >= ms) {
-          clearTimeout(deadline);
-          finish();
-        } else frame = requestAnimationFrame(sample);
-      };
-      frame = requestAnimationFrame(sample);
-    });
+    controlledFrames
+      ? (async () => {
+          // Render every pose/strike phase even when the browser throttles RAF.
+          // This measures geometry correctness, never real-time performance.
+          cancelAnimationFrame(s.animation);
+          s.last = clock;
+          for (let i = 0; i < Math.ceil(ms / (1000 / 60)); i++) {
+            clock += 1000 / 60;
+            s.frame(clock);
+            cancelAnimationFrame(s.animation);
+            inspect?.();
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        })()
+      : new Promise<void>((resolve) => {
+          const start = performance.now();
+          let frame = 0,
+            done = false;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            cancelAnimationFrame(frame);
+            resolve();
+          };
+          const deadline = setTimeout(finish, ms + 100);
+          const sample = () => {
+            if (done) return;
+            inspect?.();
+            if (performance.now() - start >= ms) {
+              clearTimeout(deadline);
+              finish();
+            } else frame = requestAnimationFrame(sample);
+          };
+          frame = requestAnimationFrame(sample);
+        });
   try {
     s.automation = undefined;
     s.cancelInput();
@@ -143,7 +158,14 @@ export async function contactAudit(s: GameScene) {
         });
       }
     }
-    return { pass: rows.every((r) => r.pass), rows, performance: s.stats() };
+    return {
+      pass: rows.every((r) => r.pass),
+      clock: controlledFrames
+        ? 'controlled 60 Hz; not an FPS test'
+        : 'live RAF',
+      rows,
+      performance: controlledFrames ? undefined : s.stats(),
+    };
   } finally {
     s.automation = undefined;
     s.cancelInput();
@@ -151,5 +173,9 @@ export async function contactAudit(s: GameScene) {
     m.pause(false);
     m.emit();
     s.turntable.home();
+    if (controlledFrames) {
+      s.last = performance.now();
+      s.animation = requestAnimationFrame(s.frame);
+    }
   }
 }
