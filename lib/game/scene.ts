@@ -3,9 +3,14 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { IceField } from './ice';
 import { ChunkedIceMesh } from './ice-renderer';
 import { meshContactSamples } from './mesh-contact';
+import { valuableArt } from './valuable-art';
 import { TrayRotation } from './rotation';
 import { GameAudio } from './audio';
-import { incomingCallPresentation, type IncomingCall } from './phone-call';
+import {
+  incomingCallPresentation,
+  PhoneRingCadence,
+  type IncomingCall,
+} from './phone-call';
 import { TUNE, type Loot, type Vec3 } from './tuning';
 import { Workshop } from './workshop';
 import { WorkshopAir } from './atmosphere';
@@ -47,6 +52,7 @@ export type SceneModel = {
   chapter?: number;
   unread?: number;
   phoneRinging?: boolean;
+  phonePending?: boolean;
   phoneOffHook?: boolean;
   settlement?: object | null;
   dialing?: boolean;
@@ -193,6 +199,7 @@ export class GameScene {
   onMugClick: () => void = () => {};
   onDialKey: (key: string) => void = () => {};
   ringClock = 0;
+  ringCadence = new PhoneRingCadence();
   phoneFocus = { ringing: false, released: false, distance: Infinity };
   messageBusy = false;
   plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.45);
@@ -545,6 +552,11 @@ export class GameScene {
           g.add(
             this.box(t.w * 0.09, t.h + 0.025, t.d, gold, t.w * x, 0, 0, 0.01),
           );
+    } else if (t.asset) {
+      gold.dispose();
+      silver.dispose();
+      enamel.dispose();
+      g.add(valuableArt(t));
     } else if (variant >= 3) {
       if (t.kind === 'coin' && variant === 4) {
         g.add(this.box(t.w, t.h, t.d * 0.65, silver, 0, 0, 0, 0.04));
@@ -1070,7 +1082,9 @@ export class GameScene {
     }) as EventListener);
     on(canvas, 'pointerdown', ((ev: PointerEvent) => {
       if (
-        (this.model.paused && !this.model.phoneRinging) ||
+        (this.model.paused &&
+          !this.model.phoneRinging &&
+          !this.model.phonePending) ||
         ![0, 2].includes(ev.button) ||
         this.pointerId !== null
       )
@@ -1473,13 +1487,21 @@ export class GameScene {
       this.model.phoneRinging,
       this.model.phoneOffHook,
       this.filesOpenRef?.current === 'phone',
+      this.model.phonePending,
     );
+    const campaignCall = this.model.inTutorial
+      ? undefined
+      : this.model.campaign?.state.call;
+    const audibleRing =
+      !!this.model.phoneRinging &&
+      (!this.model.paused || this.model.phase === 'completed');
+    const campaignRing = this.ringCadence.next(campaignCall, audibleRing);
     if (
       this.model.phoneRinging &&
       (!this.model.paused || this.model.phase === 'completed')
     ) {
       this.ringClock -= dt;
-      if (this.ringClock <= 0) {
+      if (campaignCall ? campaignRing : this.ringClock <= 0) {
         this.audio.ring(
           incomingCallPresentation(this.model.campaign?.state.call).ring,
         );

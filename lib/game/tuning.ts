@@ -51,6 +51,9 @@ export type Loot = import('./condition').ConditionFields & {
   story?: import('./campaign-content').StoryObjectId;
   variant?: number;
   name?: string;
+  asset?: import('./economy').ValuableId;
+  /** Trusted historical base, used only to display an already credited old find. */
+  legacyValue?: number;
   sensitivity?: import('./condition').CargoSensitivity;
 };
 export const FAMILY_NAMES = [

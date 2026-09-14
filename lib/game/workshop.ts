@@ -505,6 +505,7 @@ export class Workshop {
     ringing = false,
     offHook = false,
     filesOpen = false,
+    pendingCall = false,
   ) {
     reduced ||= matchMedia('(prefers-reduced-motion: reduce)').matches;
     const dt = this.lastTime ? Math.min(0.1, time - this.lastTime) : 1 / 60;
@@ -566,9 +567,11 @@ export class Workshop {
       ? Math.sin(time * 8) > 0
         ? 2.4
         : 0.1
-      : offHook
-        ? 0.65
-        : 0.03;
+      : pendingCall
+        ? 0.85
+        : offHook
+          ? 0.65
+          : 0.03;
     (this.screen.material as THREE.MeshStandardMaterial).emissiveIntensity =
       this.screenLight.step(dt, reduced);
     lamp.emissiveIntensity = Math.max(0.65, 1 + this.roomRecoil * 0.15);

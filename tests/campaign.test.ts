@@ -13,7 +13,10 @@ import {
   PAD_ACTIONS,
 } from '../lib/game/platform';
 const tick = (m: GameModel, s: number) => {
-  for (let i = 0; i < s * 60; i++) m.update(1 / 60, null);
+  for (let i = 0; i < s * 60; i++) {
+    if (m.toolNotice) m.dismissToolNotice();
+    m.update(1 / 60, null);
+  }
 };
 function answerCalls(model: GameModel) {
   for (let budget = STORY.length * 12; budget > 0; budget--) {
@@ -67,7 +70,7 @@ void test('notification priority never scrambles saved story chronology', () => 
   c.deliver();
   assert.deepEqual(c.state.history, ['ch1.tag']);
   c.openPhone();
-  assert.deepEqual(c.state.history, ['ch1.intro', 'ch1.tag']);
+  assert.deepEqual(c.state.history, ['ch1.tag']);
 });
 void test('quick primary clicks register once; cancellation prevents deferred strikes', () => {
   const m = new GameModel(),
@@ -173,8 +176,8 @@ void test('seven central tool cards do not overlap the 42 upgrade cards or root'
 });
 void test('story queues during striking, persists through reload, delivers at quiet points once', () => {
   const c = new Campaign();
-  c.trigger('GAME_START');
-  c.trigger('GAME_START');
+  c.collect('tag');
+  c.collect('tag');
   assert.equal(c.state.pending.length, 1);
   c.advanceQuiet(5, true);
   assert.equal(c.unread, 0);
@@ -186,7 +189,7 @@ void test('story queues during striking, persists through reload, delivers at qu
   assert.equal(restored.unread, 1);
   restored.openPhone();
   assert.equal(restored.unread, 0);
-  assert.ok(restored.state.history.includes('ch1.intro'));
+  assert.ok(restored.state.history.includes('ch1.tag'));
   restored.trigger('GAME_START');
   assert.equal(restored.state.pending.length, 0);
 });
@@ -210,6 +213,8 @@ void test('commission changes only after calls and the final Vault is waived aft
   c.next();
   assert.equal(c.rate, 8);
   assert.equal(c.credit(100, 'c'), 92);
+  c.state.phase = 2;
+  c.trigger('FINAL_LAYER_OPENED');
   c.collect('ledger');
   assert.equal(c.openPhone(), 8);
   assert.equal(c.rate, 0);
@@ -222,6 +227,8 @@ void test('finale cannot trigger early; epilogue and contracts require completed
   assert.equal(c.state.flags.length, 0);
   assert.equal(c.startContracts(), false);
   c.state.block = 31;
+  c.state.phase = 2;
+  c.trigger('FINAL_LAYER_OPENED');
   c.collect('ledger');
   assert.ok(c.state.flags.includes('ch5.recovered'));
   assert.equal(c.finish(), false);

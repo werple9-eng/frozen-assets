@@ -9,6 +9,13 @@ import {
   type StoryObjectId,
   type StoryEvent,
 } from './campaign-content';
+import {
+  isPhoneEvent,
+  NARRATIVE_REVISION,
+  PHONE_CALL_GAP,
+  RING_WINDOW,
+  TONY_CALL_GAP,
+} from './narrative';
 export const MILESTONES = [
   'FIRST_RELEASE',
   'FIRST_UPGRADE',
@@ -27,7 +34,17 @@ export type Milestone = (typeof MILESTONES)[number];
 export type CampaignSave = {
   revision: 1;
   layoutVersion?: 1 | 2 | 3;
-  call?: { event: string; line: number; status: 'ringing' | 'active' };
+  call?: {
+    event: string;
+    line: number;
+    status: 'ringing' | 'pending' | 'active';
+    ringSeconds?: number;
+  };
+  narrativeRevision?: number;
+  economyRevision?: 1 | 2;
+  activeSeconds?: number;
+  lastTonyAt?: number;
+  dispatchPending?: boolean;
   block: number;
   phase: number;
   commission: number;
@@ -70,6 +87,8 @@ const readEffectFlags = [
 export class Campaign {
   state: CampaignSave = {
     revision: 1,
+    narrativeRevision: NARRATIVE_REVISION,
+    economyRevision: 2,
     layoutVersion: 3,
     block: 0,
     phase: 0,
@@ -158,19 +177,28 @@ export class Campaign {
     }
   }
   advanceQuiet(dt: number, busy: boolean) {
+    this.state.activeSeconds = (this.state.activeSeconds ?? 0) + dt;
     this.state.callCooldown = Math.max(0, (this.state.callCooldown ?? 0) - dt);
     this.fileRoutineNotes();
     if (this.state.call) return false;
     this.quiet = busy ? 0 : this.quiet + dt;
     if (
-      this.quiet < (this.state.complete ? 0.8 : 3) ||
-      (this.state.callCooldown > 0 && !this.state.complete) ||
+      this.quiet < (this.state.complete ? 20 : 3) ||
+      (this.state.callCooldown > 0 && this.state.block < 31) ||
       !this.state.pending.length
     )
       return false;
-    const delivered = this.deliver();
+    const delivered = this.deliver(true);
     if (delivered) this.quiet = 0;
     return !!delivered;
+  }
+  tickRinging(dt: number) {
+    const call = this.state.call;
+    if (!call || call.status !== 'ringing') return false;
+    call.ringSeconds = Math.min(RING_WINDOW, (call.ringSeconds ?? 0) + dt);
+    if (call.ringSeconds < RING_WINDOW) return false;
+    call.status = 'pending';
+    return true;
   }
   private fileRoutineNotes() {
     const routine = (e: StoryEvent) =>
@@ -209,12 +237,12 @@ export class Campaign {
     if (event.at !== undefined && this.state.block < event.at) return false;
     return true;
   }
-  deliver() {
+  deliver(scheduled = false) {
     if (this.state.call) return;
     this.state.pending = [...new Set(this.state.pending)].filter(
       (id) =>
         !this.state.read.includes(id) &&
-        STORY.some((e) => e.id === id && !e.retired),
+        STORY.some((e) => e.id === id && !e.retired && isPhoneEvent(e)),
     );
     // Mandatory evidence always precedes incidental barks. All remain in history.
     this.state.pending.sort(
@@ -222,9 +250,18 @@ export class Campaign {
         STORY.find((e) => e.id === b)!.priority -
         STORY.find((e) => e.id === a)!.priority,
     );
-    const ready = this.state.pending.findIndex((id) =>
-      this.canDeliver(STORY.find((e) => e.id === id)!),
-    );
+    const ready = this.state.pending.findIndex((id) => {
+      const event = STORY.find((e) => e.id === id)!;
+      return (
+        this.canDeliver(event) &&
+        (!scheduled ||
+          this.state.block >= 31 ||
+          event.deliveryMode !== 'tony-call' ||
+          this.state.lastTonyAt === undefined ||
+          (this.state.activeSeconds ?? 0) - this.state.lastTonyAt >=
+            TONY_CALL_GAP)
+      );
+    });
     const id = ready >= 0 ? this.state.pending.splice(ready, 1)[0] : undefined;
     this.lastDelivered = id;
     if (id && !this.state.history.includes(id)) {
@@ -235,7 +272,12 @@ export class Campaign {
       );
     }
     if (id && !STORY.find((e) => e.id === id)?.retired)
-      this.state.call = { event: id, line: 0, status: 'ringing' };
+      this.state.call = {
+        event: id,
+        line: 0,
+        status: 'ringing',
+        ringSeconds: 0,
+      };
     return id;
   }
   completeCall(id: string): CallCompletion {
@@ -273,7 +315,9 @@ export class Campaign {
     this.state.read.push(id);
     this.state.pending = this.state.pending.filter((pending) => pending !== id);
     this.state.call = undefined;
-    this.state.callCooldown = 45;
+    this.state.callCooldown = PHONE_CALL_GAP;
+    if (event.deliveryMode === 'tony-call')
+      this.state.lastTonyAt = this.state.activeSeconds ?? 0;
     let refund = 0;
     if (commission !== undefined) {
       this.state.commission = commission;
@@ -406,6 +450,9 @@ export class Campaign {
         this.state.commission !== 0
       )
         return false;
+      // Time spent admiring the open Vault before the ending is not the
+      // post-ending quiet beat. Start that beat when completion actually lands.
+      if (!this.state.complete) this.quiet = 0;
       this.state.complete = true;
       this.trigger('CAMPAIGN_COMPLETE');
       this.milestone('CAMPAIGN_COMPLETE');
@@ -413,6 +460,8 @@ export class Campaign {
     return true;
   }
   next() {
+    this.state.dispatchPending = false;
+    this.state.economyRevision = 2;
     this.state.block++;
     this.state.layoutVersion = 3;
     this.state.blockRate = this.state.commission;
@@ -548,10 +597,25 @@ export class Campaign {
     )
       throw Error('Premature ending');
     this.state = structuredClone(s);
+    this.state.narrativeRevision = NARRATIVE_REVISION;
+    this.state.economyRevision ??= 1;
+    if (![1, 2].includes(this.state.economyRevision))
+      throw Error('Invalid economy revision');
+    for (const key of ['activeSeconds', 'lastTonyAt'] as const)
+      if (
+        this.state[key] !== undefined &&
+        (!Number.isFinite(this.state[key]) || this.state[key]! < 0)
+      )
+        throw Error('Invalid narrative clock');
+    if (
+      this.state.dispatchPending !== undefined &&
+      typeof this.state.dispatchPending !== 'boolean'
+    )
+      throw Error('Invalid dispatch checkpoint');
     this.quiet = 0;
     if (this.state.callCooldown !== undefined)
       this.state.callCooldown = Number.isFinite(this.state.callCooldown)
-        ? Math.max(0, Math.min(45, this.state.callCooldown))
+        ? Math.max(0, Math.min(PHONE_CALL_GAP, this.state.callCooldown))
         : 0;
     this.state.storyEffects = [
       ...new Set([
@@ -576,13 +640,19 @@ export class Campaign {
         !s.history.includes(call.event) ||
         !Number.isInteger(call.line) ||
         call.line < 0 ||
-        ((s.layoutVersion ?? 1) >= 3 && call.line >= event.messages.length) ||
-        !['ringing', 'active'].includes(call.status)
+        ((s.narrativeRevision ?? 1) >= NARRATIVE_REVISION &&
+          call.line >= event.messages.length) ||
+        !['ringing', 'pending', 'active'].includes(call.status)
       )
         throw Error('Invalid call checkpoint');
       if (this.state.read.includes(call.event) || event.retired)
         this.state.call = undefined;
-      else call.line = Math.min(call.line, event.messages.length - 1);
+      else {
+        call.line = Math.min(call.line, event.messages.length - 1);
+        call.ringSeconds = Number.isFinite(call.ringSeconds)
+          ? Math.max(0, Math.min(RING_WINDOW, call.ringSeconds!))
+          : 0;
+      }
     }
     if ((s.layoutVersion ?? 1) < 3) {
       // Historical completed saves already received a zero-fee final delivery.
@@ -626,6 +696,31 @@ export class Campaign {
         this.state.pending = this.state.pending.filter((id) =>
           reachable.has(id),
         );
+      }
+    }
+    if ((s.narrativeRevision ?? 1) < NARRATIVE_REVISION) {
+      // A read log now contains the commission promise that used to occupy
+      // several further calls. Apply it prospectively, never replay old credits.
+      if (this.state.read.includes('ch3.log') && this.state.commission === 12) {
+        this.state.commission = 8;
+        if (!this.state.storyEffects.includes('commission.reviewed'))
+          this.state.storyEffects.push('commission.reviewed');
+      }
+      if (!this.state.complete) {
+        for (const object of this.state.objects)
+          this.trigger('STORY_REWARD_RECOVERED', { object });
+        const queue = (id: string) => {
+          if (this.state.read.includes(id) || this.state.call?.event === id)
+            return;
+          if (!this.state.flags.includes(id)) this.state.flags.push(id);
+          if (!this.state.pending.includes(id)) this.state.pending.push(id);
+        };
+        if (this.state.block >= 26) queue('mercer.access');
+        if (this.state.block === 31) {
+          queue('ch5.final');
+          if (this.state.phase >= 2) queue('mercer.offer');
+          if (this.state.objects.includes('ledger')) queue('ch5.recovered');
+        }
       }
     }
     this.retireLedgerAdvice();

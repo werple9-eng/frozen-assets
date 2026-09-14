@@ -12,6 +12,9 @@ function delivery(model: GameModel, block: number, phase = 0, version = 3) {
   state.layoutVersion = version as 2 | 3;
   state.pending = [];
   state.call = undefined;
+  model.toolNotices = ['pick', 'heavy', 'sledge', 'breaker', 'thermal'].flatMap(
+    (id) => [`available:${id}`, `ready:${id}`, `acquired:${id}`],
+  );
   model.field = campaignField(block, phase, undefined, version);
   model.loot = campaignLoot(block, phase, version);
   model.field.carveLoot(model.loot);
@@ -87,33 +90,27 @@ function progressFixture(version = 3) {
   return model;
 }
 
-void test('Mercer and Tony must finish their inner-vault calls before a held strike can edit the archive', () => {
+void test('pending inner-Vault call permits work; only answering pauses the tool', () => {
   const model = new GameModel();
   delivery(model, 31, 2);
   const c = model.campaign!;
   c.trigger('FINAL_LAYER_OPENED');
+  c.deliver();
+  c.tickRinging(13);
+  const hit = model.field.points.find((_, i) => model.field.values[i] > 0.95)!;
   const before = model.field.values.slice();
-  const activeSeconds = model.deliveryStats.seconds;
-  const hit = model.field.points.find(
-    (_, index) => model.field.values[index] > 0.95,
-  )!;
-  for (const event of ['mercer.offer', 'tony.mercer.offer']) {
-    model.press();
-    model.update(0.05, hit);
-    assert.equal(c.state.call?.event, event);
-    assert.equal(model.firing, false);
-    assert.equal(model.strike.active, false);
-    assert.equal(model.deliveryStats.seconds, activeSeconds);
-    assert.deepEqual(model.field.values, before);
-    model.answerPhone();
-    while (c.state.call?.event === event)
-      assert.equal(model.advanceCall(), true);
-  }
   model.press();
-  for (let frame = 0; frame < 90; frame++) model.update(1 / 60, hit);
-  assert.ok(model.field.values.some((value, index) => value < before[index]));
+  model.update(0.05, hit);
+  assert.ok(model.field.values.some((v, i) => v < before[i]));
+  assert.equal(model.phonePending, true);
+  model.answerPhone();
+  const paused = model.field.values.slice();
+  model.press();
+  model.update(0.05, hit);
+  assert.deepEqual(model.field.values, paused);
+  while (model.liveCall) assert.equal(model.advanceCall(), true);
   assert.ok(c.state.read.includes('mercer.offer'));
-  assert.ok(c.state.read.includes('tony.mercer.offer'));
+  assert.ok(!c.state.flags.includes('tony.mercer.offer'));
 });
 
 void test('v5 stores compact field metadata and restores a partial cut within one byte of density', () => {
@@ -281,6 +278,10 @@ void test('a save between ledger release and landing resumes its one physical re
   const model = new GameModel();
   const phase = blockSpec(31, 3).phases - 1;
   delivery(model, 31, phase);
+  model.campaign!.state.phase = 2;
+  model.campaign!.trigger('FINAL_LAYER_OPENED');
+  model.campaign!.openPhone();
+  model.campaign!.state.phase = phase;
   const ledger = model.loot.find((item) => item.story === 'ledger');
   assert.ok(ledger);
   model.field.values.fill(0);

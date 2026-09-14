@@ -83,11 +83,11 @@ export const NODE_BUDGET: Record<MajorTool, number> = {
 };
 export const TOOL_PRICES: Record<MajorTool, number> = {
   hand: 0,
-  pick: 2500,
-  heavy: 6500,
-  sledge: 22000,
-  breaker: 35000,
-  thermal: 45000,
+  pick: 2250,
+  heavy: 6000,
+  sledge: 20000,
+  breaker: 33000,
+  thermal: 42500,
 };
 export const NODE_PRICE_BANDS: Record<
   MajorTool,

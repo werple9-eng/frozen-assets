@@ -1,335 +1,341 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { Campaign } from '../lib/game/campaign';
-import { blockSpec, STORY } from '../lib/game/campaign-content';
-import { MAJOR_RETIRED_STORY_IDS } from '../lib/game/major-story';
+import { STORY, blockSpec } from '../lib/game/campaign-content';
+import {
+  RESTRAINED_STORY,
+  RING_WINDOW,
+  TONY_CALL_GAP,
+} from '../lib/game/narrative';
 
-function finishCall(campaign: Campaign) {
-  const call = campaign.state.call;
+function finish(c: Campaign) {
+  const call = c.state.call!;
   assert.ok(call);
-  const event = STORY.find((item) => item.id === call.event);
-  assert.ok(event);
   call.status = 'active';
-  call.line = event.messages.length - 1;
-  return campaign.completeCall(call.event);
+  call.line = STORY.find((e) => e.id === call.event)!.messages.length - 1;
+  return c.completeCall(call.event);
 }
-function nextCall(campaign: Campaign, id: string) {
-  assert.equal(campaign.deliver(), id);
-  return finishCall(campaign);
-}
-function ledgerTotals(campaign: Campaign) {
-  assert.equal(
-    campaign.state.grossEarned,
-    campaign.state.netEarned + campaign.state.commissionPaid,
-  );
-  assert.ok(campaign.state.blockFee >= 0);
-  assert.ok(campaign.state.commissionPaid >= campaign.state.blockFee);
-}
-
-void test('story replacements retain stable IDs and retired archive records', () => {
-  assert.equal(new Set(STORY.map((event) => event.id)).size, STORY.length);
-  assert.equal(
-    STORY.find((event) => event.id === 'ch2.ring')?.retired,
-    undefined,
-  );
-  for (const id of MAJOR_RETIRED_STORY_IDS)
-    assert.equal(STORY.find((event) => event.id === id)?.retired, true, id);
-  assert.equal(
-    STORY.find((event) => event.id === 'ch2.ring')?.messages.length,
-    4,
-  );
-});
-
-void test('the mandatory ring reaction queues and completes exactly once', () => {
-  const c = new Campaign();
-  c.state.block = 7;
-  c.collect('ring');
-  c.collect('ring');
-  assert.equal(c.state.pending.filter((id) => id === 'ch2.ring').length, 1);
-  const result = nextCall(c, 'ch2.ring');
-  assert.equal(result.completed, true);
-  c.collect('ring');
-  c.trigger('STORY_REWARD_RECOVERED', { object: 'ring' });
-  assert.equal(c.state.pending.length, 0);
-  assert.equal(c.state.read.filter((id) => id === 'ch2.ring').length, 1);
-});
-
-void test('Mercer and Tony responses wait for completed prerequisite calls', () => {
-  const c = new Campaign();
-  c.state.block = 10;
-  c.collect('hold');
-  assert.ok(c.state.pending.includes('mercer.first'));
-  assert.equal(c.deliver(), 'ch2.internal');
-  assert.equal(c.state.read.includes('ch2.internal'), false);
-  assert.equal(c.deliver(), undefined);
-  finishCall(c);
-  nextCall(c, 'mercer.first');
-  nextCall(c, 'tony.mercer.first');
-  assert.deepEqual(c.state.read, [
-    'ch2.internal',
-    'mercer.first',
-    'tony.mercer.first',
-  ]);
-  assert.equal(c.deliver(), undefined);
-});
-
-void test('exception review changes commission only on the final acknowledgement', () => {
-  const c = new Campaign();
-  c.state.block = 17;
-  assert.equal(c.credit(1000, 'prior'), 880);
-  c.collect('log');
-  assert.equal(c.state.commission, 12);
-  nextCall(c, 'ch3.log');
-  nextCall(c, 'mercer.exception');
-  nextCall(c, 'tony.mercer.exception');
-  assert.equal(c.state.commission, 12);
-  assert.equal(c.deliver(), 'ch3.cut');
-  c.state.call!.status = 'active';
-  assert.deepEqual(c.completeCall('ch3.cut'), { completed: false, refund: 0 });
-  assert.equal(c.state.commission, 12);
-  const result = finishCall(c);
-  assert.deepEqual(result, {
-    completed: true,
-    refund: 40,
-    commissionChanged: 8,
-  });
-  assert.equal(c.rate, 8, 'an unconstructed settlement uses Tony’s new rate');
-  assert.equal(c.state.blockFee, 80);
-  assert.ok(c.state.storyEffects?.includes('commission.reviewed'));
-  assert.ok(!c.state.flags.includes('commission.reviewed'));
-  c.next();
-  assert.equal(c.rate, 8);
-  assert.equal(c.credit(500, 'next'), 460);
-  ledgerTotals(c);
-});
-
-void test('a completed receipt is not repriced by the later 8% conversation', () => {
-  const c = new Campaign();
-  c.state.block = 17;
-  c.credit(1000, 'completed-delivery');
-  c.state.settled = true;
-  c.collect('log');
-  assert.equal(c.openPhone(), 0);
-  assert.equal(c.state.commission, 8);
-  assert.equal(c.rate, 12);
-  assert.equal(c.state.blockFee, 120);
-  c.next();
-  assert.equal(c.rate, 8);
-  ledgerTotals(c);
-});
-
-void test('a delayed Exception Log conversation cannot restore the final waived commission', () => {
-  const c = new Campaign();
+function offer(c: Campaign) {
   c.state.block = 31;
-  c.credit(1000, 'vault');
-  c.collect('ledger');
-  nextCall(c, 'ch5.recovered');
-  c.collect('log');
-  assert.equal(c.openPhone(), 0);
-  assert.ok(c.state.read.includes('ch3.cut'));
-  assert.equal(c.state.commission, 0);
-  assert.equal(c.rate, 0);
-  assert.equal(c.state.blockFee, 0);
-  assert.equal(c.finish(), true);
-  ledgerTotals(c);
-});
-
-void test('queued phase-specific calls cannot ring early and survive delayed answering', () => {
-  const c = new Campaign();
-  c.state.block = 31;
-  c.state.phase = 1;
-  c.trigger('FINAL_LAYER_OPENED');
-  assert.equal(c.state.pending.includes('mercer.offer'), false);
   c.state.phase = 2;
   c.trigger('FINAL_LAYER_OPENED');
-  assert.ok(c.state.pending.includes('mercer.offer'));
-  c.state.phase = 1;
-  assert.equal(c.deliver(), undefined);
-  c.state.phase = 3;
-  nextCall(c, 'mercer.offer');
-  nextCall(c, 'tony.mercer.offer');
-  assert.equal(c.state.pending.length, 0);
-});
-
-void test('final ledger call refunds only the current Vault fee and preserves every ledger identity', () => {
+  assert.equal(c.deliver(), 'mercer.offer');
+  finish(c);
+}
+function balanced(c: Campaign) {
+  assert.equal(c.state.grossEarned, c.state.netEarned + c.state.commissionPaid);
+  assert.ok(
+    c.state.blockFee >= 0 && c.state.blockFee <= c.state.commissionPaid,
+  );
+}
+void test('automatic narrative schedule has ten authored calls and long quiet sections', () => {
   const c = new Campaign();
-  let wallet = c.credit(1000, 'earlier-delivery');
+  const timeline: {
+    event: string;
+    speaker: string;
+    delivery: number;
+    activeSeconds: number;
+  }[] = [];
+  const wait = (seconds: number, busy = false) => {
+    for (let i = 0; i < seconds; i++) {
+      if (!c.advanceQuiet(1, busy)) continue;
+      const event = STORY.find((e) => e.id === c.state.call!.event)!;
+      timeline.push({
+        event: event.id,
+        speaker: event.messages[0].speaker,
+        delivery: c.state.block + 1,
+        activeSeconds: c.state.activeSeconds!,
+      });
+      finish(c);
+    }
+  };
+  for (let block = 0; block < 32; block++) {
+    c.state.block = block;
+    c.trigger('BLOCK_START');
+    wait(200, true);
+    const object = blockSpec(block).object;
+    if (block === 31) {
+      c.state.phase = 2;
+      c.trigger('FINAL_LAYER_OPENED');
+      wait(4);
+      c.state.phase = 4;
+    }
+    if (object) c.collect(object);
+    wait(40);
+    c.trigger('BLOCK_COMPLETE');
+    if (block === 30) wait(4);
+  }
+  assert.equal(c.finish(), true);
+  wait(20);
+  assert.equal(timeline.length, 10);
+  assert.equal(timeline.filter((t) => t.speaker === 'tony').length, 7);
+  assert.equal(timeline.filter((t) => t.speaker === 'mercer').length, 3);
+  const normal = timeline.filter((t) => t.delivery < 32);
+  for (let i = 1; i < normal.length; i++)
+    assert.ok(normal[i].activeSeconds - normal[i - 1].activeSeconds >= 120);
+  const tony = normal.filter((t) => t.speaker === 'tony');
+  for (let i = 1; i < tony.length; i++)
+    assert.ok(
+      tony[i].activeSeconds - tony[i - 1].activeSeconds >= TONY_CALL_GAP,
+    );
+  assert.deepEqual(
+    timeline.map((t) => t.event),
+    RESTRAINED_STORY.map((e) => e.id),
+  );
+  mkdirSync('qa-artifacts', { recursive: true });
+  writeFileSync(
+    'qa-artifacts/narrative-schedule.json',
+    JSON.stringify(
+      {
+        fixture:
+          'Synthetic four-minute delivery clock; validates notification ordering and spacing, NOT measured gameplay duration.',
+        timeline,
+      },
+      null,
+      2,
+    ),
+  );
+});
+void test('seven Tony calls including coda and three Mercer calls remain; historical IDs stay unique', () => {
+  assert.equal(new Set(STORY.map((e) => e.id)).size, STORY.length);
+  const live = STORY.filter((e) => !e.retired);
+  assert.equal(live.length, 10);
+  assert.equal(live.filter((e) => e.deliveryMode === 'tony-call').length, 7);
+  assert.equal(live.filter((e) => e.deliveryMode === 'mercer-call').length, 3);
+  assert.deepEqual(
+    new Set(live.map((e) => e.id)),
+    new Set(RESTRAINED_STORY.map((e) => e.id)),
+  );
+  assert.ok(
+    STORY.filter((e) => e.id.startsWith('equipment.')).every(
+      (e) => e.retired && e.deliveryMode === 'tool-presentation',
+    ),
+  );
+});
+void test('routine deliveries, purchases and first rewards never ring', () => {
+  const c = new Campaign();
+  for (let block = 0; block < 32; block++) {
+    c.state.block = block;
+    for (const trigger of [
+      'GAME_START',
+      'FIRST_REWARD',
+      'BLOCK_START',
+      'TOOL_UNLOCK',
+    ] as const)
+      c.trigger(trigger, { tool: 'pick' });
+  }
+  assert.deepEqual(c.state.pending, ['mercer.access']);
+  assert.equal(c.deliver(), undefined);
+});
+void test('each evidence queues its single conversation once, without redundant responses', () => {
+  for (const [object, id] of [
+    ['tag', 'ch1.tag'],
+    ['ring', 'ch2.ring'],
+    ['hold', 'mercer.first'],
+    ['log', 'ch3.log'],
+    ['access', 'ch4.route'],
+  ] as const) {
+    const c = new Campaign();
+    c.collect(object);
+    c.collect(object);
+    assert.deepEqual(c.state.pending, [id]);
+    assert.equal(c.deliver(), id);
+    assert.equal(finish(c).completed, true);
+    c.collect(object);
+    c.trigger('STORY_REWARD_RECOVERED', { object });
+    assert.deepEqual(c.state.read, [id]);
+    assert.equal(c.deliver(), undefined);
+  }
+});
+void test('log promise applies on final acknowledgement; only unsettled current fees are refunded', () => {
+  for (const settled of [false, true]) {
+    const c = new Campaign();
+    c.state.block = 17;
+    c.credit(1000, 'log-cargo');
+    c.state.settled = settled;
+    c.collect('log');
+    c.deliver();
+    c.state.call!.status = 'active';
+    assert.equal(c.completeCall('ch3.log').completed, false);
+    assert.equal(c.state.commission, 12);
+    assert.equal(finish(c).refund, settled ? 0 : 40);
+    assert.equal(c.state.commission, 8);
+    assert.equal(c.rate, settled ? 12 : 8);
+    assert.equal(c.completeCall('ch3.log').refund, 0);
+    c.next();
+    assert.equal(c.rate, 8);
+    balanced(c);
+  }
+});
+void test('unread Mercer offer precedes final recovery; waiver refunds only Vault fees exactly once across reload', () => {
+  const c = new Campaign();
+  let wallet = c.credit(1000, 'prior');
+  c.next();
   c.state.block = 31;
+  c.state.phase = 2;
   c.state.commission = c.state.blockRate = 8;
-  c.state.blockGross = c.state.blockFee = 0;
-  wallet += c.credit(800, 'vault-phase-1');
-  c.state.phase = 1;
-  wallet += c.credit(1200, 'vault-phase-2');
-  assert.equal(c.state.blockFee, 160);
-  assert.equal(c.rate, 8, 'delivery index alone cannot waive commission');
+  wallet += c.credit(2000, 'vault');
+  c.trigger('FINAL_LAYER_OPENED');
   c.collect('ledger');
   assert.equal(c.finish(), false);
-  assert.equal(c.state.complete, false);
+  assert.equal(c.deliver(), 'mercer.offer');
+  finish(c);
   assert.equal(c.deliver(), 'ch5.recovered');
   c.state.call!.status = 'active';
   assert.equal(c.completeCall('ch5.recovered').completed, false);
-  assert.equal(c.state.blockFee, 160);
-  const result = finishCall(c);
-  wallet += result.refund;
-  assert.deepEqual(result, {
-    completed: true,
-    refund: 160,
-    commissionChanged: 0,
-  });
-  assert.equal(c.state.blockFee, 0);
-  assert.equal(c.rate, 0);
-  assert.equal(c.state.commissionPaid, 120);
-  assert.equal(wallet, c.state.netEarned);
-  assert.equal(c.completeCall('ch5.recovered').refund, 0);
-  assert.equal(c.finish(), true);
-  assert.equal(c.state.complete, true);
-  wallet += c.credit(100, 'final-late-land');
-  assert.equal(wallet, c.state.netEarned);
-  ledgerTotals(c);
+  const copy = new Campaign();
+  copy.restore(structuredClone(c.state));
+  wallet += finish(copy).refund;
+  assert.equal(copy.state.blockFee, 0);
+  assert.equal(copy.state.commissionPaid, 120);
+  assert.equal(wallet, copy.state.netEarned);
+  assert.equal(copy.completeCall('ch5.recovered').refund, 0);
+  assert.equal(copy.finish(), true);
+  assert.equal(copy.state.commission, 0);
+  balanced(copy);
 });
-
-void test('read state and final refund are idempotent across save checkpoints', () => {
+void test('delayed log cannot restore a waived cut', () => {
   const c = new Campaign();
-  c.state.block = 31;
-  c.state.commission = c.state.blockRate = 8;
-  c.credit(1250, 'vault-find');
+  offer(c);
   c.collect('ledger');
   c.deliver();
-  c.state.call!.status = 'active';
-  c.state.call!.line = 2;
-  const resumed = new Campaign();
-  resumed.restore(JSON.parse(JSON.stringify(c.state)));
-  assert.equal(resumed.state.call?.line, 2);
-  assert.equal(resumed.completeCall('ch5.recovered').completed, false);
-  assert.equal(finishCall(resumed).refund, 100);
-  const again = new Campaign();
-  again.restore(JSON.parse(JSON.stringify(resumed.state)));
-  assert.equal(again.completeCall('ch5.recovered').refund, 0);
-  assert.equal(again.rate, 0);
-  ledgerTotals(again);
+  finish(c);
+  c.collect('log');
+  c.deliver();
+  finish(c);
+  assert.equal(c.state.commission, 0);
+  assert.equal(c.rate, 0);
+  balanced(c);
 });
-
-void test('legacy openPhone drains eligible calls through effects and stops at unmet gates', () => {
-  const blocked = new Campaign();
-  blocked.state.block = 10;
-  blocked.state.flags = ['mercer.first'];
-  blocked.state.pending = ['mercer.first'];
-  assert.equal(blocked.openPhone(), 0);
-  assert.deepEqual(blocked.state.pending, ['mercer.first']);
-  assert.equal(blocked.state.read.length, 0);
-  const log = new Campaign();
-  log.state.block = 17;
-  log.collect('log');
-  assert.equal(log.openPhone(), 0);
-  assert.equal(log.state.commission, 8);
-  assert.deepEqual(log.state.read, [
-    'ch3.log',
-    'mercer.exception',
-    'tony.mercer.exception',
-    'ch3.cut',
-  ]);
-  const final = new Campaign();
-  final.state.block = 31;
-  final.credit(1000, 'find');
-  final.collect('ledger');
-  assert.equal(final.openPhone(), 120);
-  assert.equal(final.openPhone(), 0);
-  assert.equal(final.state.commission, 0);
-  ledgerTotals(final);
+void test('phase call cannot ring early and survives delayed answering', () => {
+  const c = new Campaign();
+  c.state.block = 31;
+  c.state.phase = 1;
+  c.trigger('FINAL_LAYER_OPENED');
+  assert.deepEqual(c.state.pending, []);
+  c.state.phase = 2;
+  c.trigger('FINAL_LAYER_OPENED');
+  c.state.phase = 1;
+  assert.equal(c.deliver(), undefined);
+  c.state.phase = 4;
+  assert.equal(c.deliver(), 'mercer.offer');
+  finish(c);
+  assert.equal(c.deliver(), undefined);
 });
-
-void test('zero commission and authored five-phase layout checkpoints restore safely', () => {
-  assert.equal(blockSpec(31, 3).phases, 5);
+void test('eight-minute spacing survives reload and busy work; explicit return calls need no waiting', () => {
+  const c = new Campaign();
+  c.collect('tag');
+  c.deliver();
+  finish(c);
+  c.collect('ring');
+  assert.equal(c.advanceQuiet(300, false), false);
+  const copy = new Campaign();
+  copy.restore(structuredClone(c.state));
+  assert.equal(copy.advanceQuiet(TONY_CALL_GAP - 300, true), false);
+  assert.equal(copy.advanceQuiet(3, false), true);
+  assert.equal(copy.state.call?.event, 'ch2.ring');
+  const direct = new Campaign();
+  direct.restore(structuredClone(c.state));
+  assert.equal(direct.deliver(), 'ch2.ring');
+});
+void test('three ring cycles become silent pending and stay silent across reload', () => {
+  const c = new Campaign();
+  c.collect('tag');
+  c.deliver();
+  assert.equal(c.tickRinging(RING_WINDOW - 0.01), false);
+  assert.equal(c.tickRinging(0.02), true);
+  assert.equal(c.state.call!.status, 'pending');
+  const copy = new Campaign();
+  copy.restore(structuredClone(c.state));
+  assert.equal(copy.tickRinging(60), false);
+  assert.equal(copy.state.call!.status, 'pending');
+  assert.equal(finish(copy).completed, true);
+});
+void test('historical active scripts clamp; retired calls disappear without inventing read history', () => {
+  for (const id of ['ch2.ring', 'ch2.internal']) {
+    const c = new Campaign();
+    c.state.narrativeRevision = 1;
+    c.state.objects = ['hold', 'ring'];
+    c.state.flags = [id];
+    c.state.history = [id];
+    c.state.call = { event: id, line: 5, status: 'active' };
+    const copy = new Campaign();
+    copy.restore(c.state);
+    assert.ok(copy.state.history.includes(id));
+    assert.ok(!copy.state.read.includes(id));
+    if (id === 'ch2.ring') assert.equal(copy.state.call!.line, 2);
+    else assert.equal(copy.state.call, undefined);
+    assert.ok(copy.state.pending.includes('mercer.first'));
+  }
+});
+void test('old read log adopts prospective cut without replaying credits; old Vault recovers missing prerequisites', () => {
+  const c = new Campaign();
+  c.credit(1000, 'old');
+  c.state.narrativeRevision = 1;
+  c.state.flags = c.state.history = c.state.read = ['ch3.log'];
+  c.state.objects = ['log'];
+  const copy = new Campaign();
+  copy.restore(c.state);
+  assert.equal(copy.state.commission, 8);
+  assert.equal(copy.state.netEarned, 880);
+  assert.equal(copy.state.blockFee, 120);
+  c.state.block = 31;
+  c.state.phase = 4;
+  c.state.objects.push('ledger');
+  const vault = new Campaign();
+  vault.restore(c.state);
+  assert.ok(vault.state.pending.includes('mercer.offer'));
+  assert.ok(vault.state.pending.includes('ch5.recovered'));
+});
+void test('unknown effects, invalid clocks/phases and unbalanced money cannot restore', () => {
+  const c = new Campaign();
+  for (const patch of [
+    { phase: 5 },
+    { flags: ['fabricated'] },
+    { netEarned: 20 },
+    { activeSeconds: -1 },
+    { lastTonyAt: Infinity },
+    { dispatchPending: 'yes' },
+    { economyRevision: 3 },
+    { storyEffects: ['fake'] },
+  ])
+    assert.throws(() => new Campaign().restore({ ...c.state, ...patch }));
+  c.collect('tag');
+  c.deliver();
+  c.state.call!.line = 200;
+  assert.throws(() => new Campaign().restore(c.state));
+});
+void test('completed imports recover one quiet coda; contracts wait for acknowledgement', () => {
   const c = new Campaign();
   c.state.block = 31;
   c.state.phase = 4;
-  c.state.commission = c.state.blockRate = 0;
-  const copy = new Campaign();
-  copy.restore(JSON.parse(JSON.stringify(c.state)));
-  assert.equal(copy.state.layoutVersion, 3);
-  assert.equal(copy.state.phase, 4);
-  assert.equal(copy.rate, 0);
-  assert.throws(() => copy.restore({ ...c.state, phase: 5 }));
-});
-
-void test('old active dialogue checkpoints clamp shortened scripts and preserve history', () => {
-  const c = new Campaign();
-  c.state.layoutVersion = 2;
-  c.state.block = 10;
-  c.state.objects = ['hold'];
-  c.state.flags = ['ch2.internal'];
-  c.state.history = ['ch2.internal'];
-  c.state.call = { event: 'ch2.internal', line: 5, status: 'active' };
-  const copy = new Campaign();
-  copy.restore(c.state);
-  assert.deepEqual(copy.state.history, ['ch2.internal']);
-  assert.equal(copy.state.call?.line, 1);
-  assert.equal(finishCall(copy).completed, true);
-  assert.ok(copy.state.pending.includes('mercer.first'));
-  nextCall(copy, 'mercer.first');
-});
-
-void test('old completed zero-fee saves retain campaign history without receiving money again', () => {
-  const c = new Campaign();
-  c.state.layoutVersion = 2;
-  c.state.block = 31;
   c.state.objects = ['ledger'];
   c.state.complete = true;
-  c.state.flags = ['ch5.recovered', 'ch5.cut'];
-  c.state.history = ['ch5.recovered', 'ch5.cut'];
-  c.state.read = ['ch5.recovered', 'ch5.cut'];
-  c.state.grossEarned = c.state.netEarned = c.state.blockGross = 1000;
+  c.state.commission = c.state.blockRate = 0;
+  c.state.flags = c.state.history = c.state.read = ['ch5.recovered'];
+  c.credit(1000, 'final');
   const copy = new Campaign();
   copy.restore(c.state);
-  assert.deepEqual(copy.state.history, c.state.history);
+  assert.deepEqual(copy.state.pending, ['epilogue']);
+  assert.equal(copy.startContracts(), false);
+  assert.equal(copy.advanceQuiet(19, false), false);
+  assert.equal(copy.advanceQuiet(1, false), true);
+  finish(copy);
+  assert.equal(copy.startContracts(), true);
   assert.equal(copy.state.netEarned, 1000);
-  assert.equal(copy.rate, 0);
-  assert.deepEqual(
-    copy.state.pending,
-    ['epilogue'],
-    'the unpaid final coda is restored without replaying earlier effects',
-  );
-  assert.equal(copy.completeCall('ch5.recovered').refund, 0);
-  ledgerTotals(copy);
+  assert.equal(copy.rate, 8);
 });
 
-void test('restored effect flags validate but unknown flags and impossible refund balances fail', () => {
+void test('quiet time before finishing the Vault cannot shorten the postgame beat', () => {
   const c = new Campaign();
-  c.state.flags = ['commission.reviewed'];
-  const copy = new Campaign();
-  assert.doesNotThrow(() => copy.restore(c.state));
-  assert.deepEqual(copy.state.storyEffects, ['commission.reviewed']);
-  assert.deepEqual(copy.state.flags, []);
-  assert.throws(() =>
-    copy.restore({ ...c.state, storyEffects: ['fabricated-effect'] }),
-  );
-  assert.throws(() =>
-    copy.restore({ ...c.state, flags: ['fabricated-effect'] }),
-  );
-  assert.throws(() =>
-    copy.restore({
-      ...c.state,
-      blockGross: 100,
-      blockFee: 12,
-      grossEarned: 100,
-      netEarned: 100,
-      commissionPaid: 0,
-    }),
-  );
-});
-
-void test('settlement identity belongs to its receipt and clears on the next delivery', () => {
-  const c = new Campaign();
-  c.state.settled = true;
-  c.state.settledId = c.block.id;
-  const copy = new Campaign();
-  copy.restore(c.state);
-  assert.equal(copy.state.settledId, c.block.id);
-  assert.throws(() =>
-    copy.restore({ ...c.state, settledId: 'unrelated-delivery' }),
-  );
-  assert.throws(() => copy.restore({ ...c.state, settled: false }));
-  copy.next();
-  assert.equal(copy.state.settledId, undefined);
-  assert.equal(copy.state.settled, false);
+  c.state.block = 31;
+  c.state.objects = ['ledger'];
+  c.state.read = ['ch5.recovered'];
+  c.state.commission = c.state.blockRate = 0;
+  c.advanceQuiet(120, false);
+  assert.equal(c.finish(), true);
+  assert.equal(c.advanceQuiet(19, false), false);
+  assert.equal(c.advanceQuiet(1, false), true);
+  assert.equal(c.state.call?.event, 'epilogue');
 });

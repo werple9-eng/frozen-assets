@@ -119,7 +119,7 @@ void test('save catalog rejects an invalid active slot without publishing malfor
 
 void test('Tony call spacing survives reload instead of ringing again after three seconds', () => {
   const campaign = new Campaign();
-  campaign.trigger('GAME_START');
+  campaign.collect('tag');
   campaign.deliver();
   const event = campaign.state.call!.event;
   campaign.state.call!.status = 'active';
@@ -127,11 +127,11 @@ void test('Tony call spacing survives reload instead of ringing again after thre
     STORY.find((e) => e.id === event)!.messages.length - 1;
   campaign.completeCall(event);
   campaign.state.block = 4;
-  campaign.collect('tag');
+  campaign.collect('ring');
   const restored = new Campaign();
   restored.restore(JSON.parse(JSON.stringify(campaign.state)));
   for (let i = 0; i < 100; i++) restored.advanceQuiet(0.05, false);
   assert.equal(restored.state.call, undefined);
-  for (let i = 0; i < 810; i++) restored.advanceQuiet(0.05, false);
+  for (let i = 0; i < 9610; i++) restored.advanceQuiet(0.05, false);
   assert.ok(restored.state.call, 'queued story must eventually ring');
 });

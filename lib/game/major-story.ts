@@ -16,6 +16,7 @@ const call = (
   lines: string[],
   options: Options = {},
 ): StoryEvent => ({
+  deliveryMode: 'silent',
   id,
   chapter,
   trigger,
@@ -340,11 +341,11 @@ export const EVIDENCE_ANNOTATIONS: Record<
     text: 'Dad worked for Bellwether. They called this an estate reconciliation. Never gave me a date. — T.',
   },
   hold: {
-    requiresRead: 'tony.mercer.first',
+    requiresRead: 'mercer.first',
     text: 'The review stamp predates our first recovery. Mercer inherited the classification problem; she approved keeping Preservation in place. — T.',
   },
   log: {
-    requiresRead: 'tony.mercer.exception',
+    requiresRead: 'ch3.log',
     text: 'The stated reason is custody integrity pending reconciliation. The approval chain is Mercer’s. Release would have exposed the liability. — T.',
   },
   access: {

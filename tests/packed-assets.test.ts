@@ -123,11 +123,10 @@ void test('routine tips file silently; meaningful calls wait for a quiet pause a
   call.status = 'active';
   call.line = STORY.find((e) => e.id === call.event)!.messages.length - 1;
   c.completeCall(call.event);
-  c.state.flags.push('ch2.pool');
-  c.state.pending.push('ch2.pool');
+  c.collect('ring');
   c.state.block = 5;
   assert.equal(c.advanceQuiet(20, false), false);
-  assert.equal(c.advanceQuiet(26, false), true);
+  assert.equal(c.advanceQuiet(461, false), true);
 });
 
 void test('pick handle hangs below its head while its contact pivot stays on the ice', () => {

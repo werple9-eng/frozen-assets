@@ -422,7 +422,10 @@ export default function Home() {
             files();
             return;
           }
-          if (m.phoneRinging && (e.key === 'Enter' || e.key === ' ')) {
+          if (
+            (m.phoneRinging || m.phonePending) &&
+            (e.key === 'Enter' || e.key === ' ')
+          ) {
             e.preventDefault();
             phone();
             return;
@@ -558,7 +561,7 @@ export default function Home() {
             m.skipSettlement();
             return;
           }
-          if (m.phoneRinging && !menuRef.current) {
+          if ((m.phoneRinging || m.phonePending) && !menuRef.current) {
             phone();
             return;
           }
@@ -1710,6 +1713,9 @@ export default function Home() {
                     : 'TOOL ACQUIRED'}
               </div>
               <ToolDisplay tool={s.toolNotice.tool} />
+              <small className="requisition-source">
+                BELLWETHER MAINTENANCE SURPLUS · EQUIPMENT TRANSFER
+              </small>
               <DialogTitle>
                 {TOOLS.find((t) => t.id === s.toolNotice!.tool)!.name}
               </DialogTitle>
@@ -1721,6 +1727,13 @@ export default function Home() {
                     : TOOLS.find((t) => t.id === s.toolNotice!.tool)!
                         .description}
               </DialogDescription>
+              {s.toolNotice.kind === 'available' && (
+                <p className="requisition-note">
+                  {s.toolNotice.tool === 'sledge'
+                    ? '“Maintenance won’t miss it.” — T'
+                    : 'Equipment routed to recovery bench.'}
+                </p>
+              )}
               {s.toolNotice.kind !== 'acquired' && (
                 <div className="reveal-price">
                   $

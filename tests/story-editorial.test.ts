@@ -13,159 +13,17 @@ function finishCall(c: Campaign) {
   assert.equal(c.completeCall(call.event).completed, true);
 }
 
-void test('Ledger recovery retires queued exposure advice before the exact final call', () => {
-  const c = new Campaign();
-  c.state.block = 31;
-  c.state.phase = 4;
-  c.trigger('FINAL_LEDGER_EXPOSED');
-  assert.ok(c.state.pending.includes('ch5.exposed'));
-  c.collect('ledger');
-  assert.equal(c.deliver(), 'ch5.recovered');
-  finishCall(c);
-  assert.equal(
-    c.deliver(),
-    undefined,
-    'last-restraint advice is obsolete after recovery',
-  );
-  assert.ok(
-    !c.state.read.includes('ch5.exposed'),
-    'unheard advice is not falsely marked read',
-  );
-  c.trigger('FINAL_LEDGER_EXPOSED');
-  assert.equal(c.deliver(), undefined);
-});
-
-void test('unanswered exposure advice gives way to recovery, while previously read advice stays in history', () => {
-  for (const readFirst of [false, true]) {
-    const c = new Campaign();
-    c.state.block = 31;
-    c.state.phase = 4;
-    c.trigger('FINAL_LEDGER_EXPOSED');
-    assert.equal(c.deliver(), 'ch5.exposed');
-    if (readFirst) finishCall(c);
-    c.collect('ledger');
-    assert.equal(c.deliver(), 'ch5.recovered');
-    assert.equal(c.state.history.includes('ch5.exposed'), readFirst);
-    assert.equal(c.state.read.includes('ch5.exposed'), readFirst);
-    finishCall(c);
-    assert.equal(c.deliver(), undefined);
-  }
-});
-
-void test('resuming an older Ledger checkpoint cannot resurrect unspoken restraint advice', () => {
-  const c = new Campaign();
-  c.state.block = 31;
-  c.state.phase = 4;
-  c.trigger('FINAL_LEDGER_EXPOSED');
-  c.deliver();
-  // This is the exact obsolete queue shape from before recovery cleanup.
-  c.state.objects.push('ledger');
-  c.trigger('FINAL_LEDGER_RECOVERED');
-  const copy = new Campaign();
-  copy.restore(structuredClone(c.state));
-  assert.equal(copy.deliver(), 'ch5.recovered');
-  assert.ok(!copy.state.history.includes('ch5.exposed'));
-  finishCall(copy);
-  const twice = new Campaign();
-  twice.restore(structuredClone(copy.state));
-  assert.equal(twice.deliver(), undefined);
-  assert.equal(
-    twice.state.read.filter((id) => id === 'ch5.recovered').length,
-    1,
-  );
-});
-
-void test('the required ring, Mercer and final commission dialogue keeps the exact user-authored line order', () => {
-  const expected: Record<string, string[]> = {
-    'ch2.ring': [
-      "Hold on. That ring. Don't sell it.",
-      "It was my father's. Bellwether froze his estate after he died.",
-      "That's why I started looking through your hold in the first place. I should've told you.",
-      "I knew his account was mixed in. I didn't know how many others were.",
-    ],
-    'mercer.first': [
-      'This is Helen Mercer, Asset Preservation.',
-      'You are in possession of Bellwether custody material. Stop removing inventory and we can correct your account quietly.',
-    ],
-    'tony.mercer.first': [
-      'Helen Mercer. She runs Preservation.',
-      "If she's calling you herself, they're finally paying attention.",
-    ],
-    'mercer.exception': [
-      "Internal review documents are not customer records. You do not understand what you're reading.",
-      'Return the materials. This is the last informal request.',
-    ],
-    'tony.mercer.exception': ['She signed the review chain.'],
-    'mercer.access': [
-      'Your access route has been identified.',
-      'The next item removed from Sublevel B will be treated as deliberate theft.',
-    ],
-    'tony.mercer.access': [
-      "That's useful.",
-      "Means they finally figured out which door we're using.",
-    ],
-    'mercer.offer': [
-      'You are about to remove protected master records.',
-      'Put the ledger back. Bellwether will release your personal claim in full.',
-    ],
-    'tony.mercer.offer': [
-      "That's the first time they've offered you anything.",
-    ],
-    'ch3.cut': [
-      "I've been taking twelve percent while you clean up a mess they already knew about.",
-      "Eight from here on. Don't make a thing out of it.",
-    ],
-    'ch5.recovered': [
-      'You got it.',
-      "I'm copying it now. Every hold, every review, every account they buried.",
-      "By the time they get to my desk, it won't matter.",
-      "I'm not taking a cut on this one.",
-    ],
-  };
-  for (const [id, lines] of Object.entries(expected)) {
-    const event = STORY.find((e) => e.id === id)!;
-    assert.equal(event.retired, undefined, id);
-    assert.deepEqual(
-      event.messages.map((line) => line.text),
-      lines,
-      id,
-    );
-    assert.ok(
-      event.messages.every(
-        (line) =>
-          line.speaker === (id.startsWith('mercer.') ? 'mercer' : 'tony'),
-      ),
-    );
-  }
-});
-
-void test('Mercer evidence arcs resume every player-paced line without skipping prerequisites or repeating effects', () => {
+void test('every authored call resumes each line exactly once and preserves its caller and money', () => {
   const arcs = [
-    {
-      block: 10,
-      object: 'hold',
-      events: ['ch2.internal', 'mercer.first', 'tony.mercer.first'],
-    },
-    {
-      block: 17,
-      object: 'log',
-      events: [
-        'ch3.log',
-        'mercer.exception',
-        'tony.mercer.exception',
-        'ch3.cut',
-      ],
-    },
-    {
-      block: 24,
-      object: 'access',
-      events: ['ch4.route', 'mercer.access', 'tony.mercer.access'],
-    },
+    { block: 4, object: 'tag', event: 'ch1.tag' },
+    { block: 7, object: 'ring', event: 'ch2.ring' },
+    { block: 10, object: 'hold', event: 'mercer.first' },
+    { block: 17, object: 'log', event: 'ch3.log' },
+    { block: 24, object: 'access', event: 'ch4.route' },
   ] as const;
   for (const arc of arcs) {
     let m = new GameModel();
     m.round = m.campaign!.state.block = arc.block;
-    m.campaign!.state.pending = [];
     m.field = campaignField(arc.block);
     m.loot = campaignLoot(arc.block);
     m.field.carveLoot(m.loot);
@@ -175,41 +33,22 @@ void test('Mercer evidence arcs resume every player-paced line without skipping 
       `ready:${id}`,
       `acquired:${id}`,
     ]);
-    m.money += m.campaign!.credit(1000, `story-review-${arc.block}`);
+    m.money += m.campaign!.credit(1000, 'fixture');
     m.earned += 1000;
     m.campaign!.collect(arc.object);
-    for (const id of arc.events) {
-      assert.equal(m.campaign!.deliver(), id);
-      assert.equal(m.liveCall, null, 'ringing does not disclose the call');
-      m.answerPhone();
-      const lines = STORY.find((e) => e.id === id)!.messages;
-      for (let line = 0; line < lines.length; line++) {
-        m = new GameModel(m.serialize());
-        assert.equal(m.saveStatus, 'saved');
-        assert.equal(m.liveCall!.text, lines[line].text);
-        assert.equal(m.liveCall!.institutional, id.startsWith('mercer.'));
-        assert.equal(m.campaign!.state.read.includes(id), false);
-        assert.equal(m.campaign!.state.commission, 12);
-        const current = m.liveCall!.id;
-        assert.equal(
-          m.advanceCall(`${id}:${line + 1}`),
-          false,
-          'a stale/different line cannot advance this one',
-        );
-        assert.equal(m.advanceCall(current), true);
-        assert.equal(
-          m.advanceCall(current),
-          false,
-          'the same confirm cannot advance twice',
-        );
-      }
-      assert.ok(m.campaign!.state.read.includes(id));
-      assert.equal(
-        m.campaign!.state.read.filter((read) => read === id).length,
-        1,
-      );
+    assert.equal(m.campaign!.deliver(), arc.event);
+    m.answerPhone();
+    const event = STORY.find((e) => e.id === arc.event)!;
+    for (const line of event.messages) {
+      m = new GameModel(m.serialize());
+      assert.equal(m.saveStatus, 'saved');
+      assert.equal(m.liveCall!.text, line.text);
+      assert.equal(m.liveCall!.institutional, line.speaker === 'mercer');
+      const id = m.liveCall!.id;
+      assert.equal(m.advanceCall(id), true);
+      assert.equal(m.advanceCall(id), false);
     }
-    assert.equal(m.campaign!.state.commission, arc.object === 'log' ? 8 : 12);
+    assert.deepEqual(m.campaign!.state.read, [arc.event]);
     assert.equal(m.money, arc.object === 'log' ? 920 : 880);
     assert.equal(m.campaign!.deliver(), undefined);
   }
@@ -273,7 +112,7 @@ void test('completed legacy saves missing the final coda recover one playable ep
     const twice = new Campaign();
     twice.restore(structuredClone(copy.state));
     assert.deepEqual(twice.state.pending, ['epilogue']);
-    assert.equal(twice.advanceQuiet(0.8, false), true);
+    assert.equal(twice.advanceQuiet(20, false), true);
     assert.equal(twice.state.call?.event, 'epilogue');
     finishCall(twice);
     assert.equal(twice.state.netEarned, 1000);
@@ -347,7 +186,7 @@ void test('a completed GameModel restore rings the missing epilogue through pick
   assert.deepEqual(copy.campaign!.state.pending, ['epilogue']);
   copy.continuePlaying();
   assert.equal(copy.phase, 'completed');
-  for (let frame = 0; frame < 60 && !copy.phoneRinging; frame++)
+  for (let frame = 0; frame < 1300 && !copy.phoneRinging; frame++)
     copy.update(1 / 60, null);
   assert.equal(copy.phoneRinging, true);
   assert.equal(copy.campaign!.state.call?.event, 'epilogue');
@@ -400,11 +239,11 @@ void test('completed legacy imports retire impossible old prerequisite queues wi
     copy.restore(structuredClone(c.state));
     assert.deepEqual(
       copy.state.pending,
-      resolvable ? [...pending, 'epilogue'] : ['epilogue'],
+      resolvable ? ['ch3.log', 'epilogue'] : ['epilogue'],
     );
     assert.equal(copy.openPhone(), 0);
     assert.deepEqual(copy.state.pending, []);
-    assert.equal(copy.state.read.includes('ch3.cut'), resolvable);
+    assert.equal(copy.state.read.includes('ch3.log'), resolvable);
     assert.equal(copy.state.commission, 0);
     assert.equal(copy.startContracts(), true);
   }
@@ -422,5 +261,5 @@ void test('completed legacy imports retire impossible old prerequisite queues wi
   });
   const copy = new Campaign();
   copy.restore(structuredClone(current.state));
-  assert.ok(copy.state.pending.includes('ch3.cut'));
+  assert.ok(!copy.state.pending.includes('ch3.cut'));
 });

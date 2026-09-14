@@ -51,14 +51,14 @@ void test('micro blocks use smaller physical geometry and release only after con
 void test('the authored tutorial reaches Chapter 1 without timers or hidden credits', () => {
   const result = runTutorialSequence();
   assert.equal(result.completed, true);
-  assert.equal(result.gross, 215);
-  assert.equal(result.commission, 25);
-  assert.equal(result.money, 165);
+  assert.equal(result.gross, 100);
+  assert.equal(result.commission, 11);
+  assert.equal(result.money, 64);
   // This probe skips all text and knows the exact buried object positions;
   // it checks mechanical effort, not a first-time human reading duration.
   // Strike cycles retain fractional frame time; the old cooldown rounded each
   // .36s hold strike up to .4s in this 20Hz probe.
-  assert.ok(result.holdSeconds >= 25 && result.holdSeconds <= 60);
+  assert.ok(result.holdSeconds >= 8 && result.holdSeconds <= 60);
   assert.ok(
     result.metrics.block1Strikes >= 10 && result.metrics.block1Strikes <= 16,
   );

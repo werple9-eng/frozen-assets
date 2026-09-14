@@ -3,6 +3,8 @@ import { TOOL_PRICES } from './tool-trees';
 import { MAJOR_BLOCKS, recoveryContract } from './major-campaign';
 import { LEGACY_V2_BLOCKS } from './legacy-layouts';
 import { MAJOR_RETIRED_STORY_IDS, MAJOR_STORY_EVENTS } from './major-story';
+import { restrainedEvent, type NarrativeDeliveryMode } from './narrative';
+import { phaseCargo, VALUABLES } from './economy';
 export const CAMPAIGN_REVISION = 1;
 export const CHAPTERS = [
   { id: 1, name: 'Small Change', start: 0, end: 4 },
@@ -52,7 +54,7 @@ export const TOOLS: {
   {
     id: 'pick',
     name: 'Ice pick',
-    block: 4,
+    block: 3,
     cost: TOOL_PRICES.pick,
     cadence: 0.525,
     radius: 0.98,
@@ -72,7 +74,7 @@ export const TOOLS: {
   {
     id: 'sledge',
     name: 'Sledgehammer',
-    block: 16,
+    block: 14,
     cost: TOOL_PRICES.sledge,
     cadence: 1.1,
     radius: 2.3,
@@ -82,7 +84,7 @@ export const TOOLS: {
   {
     id: 'breaker',
     name: 'Powered breaker',
-    block: 23,
+    block: 20,
     cost: TOOL_PRICES.breaker,
     cadence: 0.13,
     radius: 1.35,
@@ -92,7 +94,7 @@ export const TOOLS: {
   {
     id: 'thermal',
     name: 'Thermal tool',
-    block: 27,
+    block: 24,
     cost: TOOL_PRICES.thermal,
     cadence: 0,
     radius: 1.39,
@@ -279,12 +281,52 @@ export const LEGACY_BLOCKS: BlockSpec[] = blocks.map(
     hint: hints[profile],
   }),
 );
-export const BLOCKS: BlockSpec[] = MAJOR_BLOCKS;
-export function blockSpec(index: number, layoutVersion = 3): BlockSpec {
+function currentEconomy(b: BlockSpec, index: number): BlockSpec {
+  const phases = b.ice!.phases.map((p, phase) => ({
+    ...p,
+    lots: phaseCargo(index, phase, b.phases, p.lots).length,
+  }));
+  const baseGross = b.ice!.phases.reduce(
+    (sum, p, phase) =>
+      sum +
+      phaseCargo(index, phase, b.phases, p.lots).reduce(
+        (value, id) => value + VALUABLES[id].value,
+        0,
+      ),
+    0,
+  );
+  const rate = index === 31 ? 0 : index >= 17 ? 8 : 12;
+  return {
+    ...b,
+    lots: phases.reduce((n, p) => n + p.lots, 0),
+    ice: { phases },
+    baseGross,
+    baseNet: baseGross - Math.floor((baseGross * rate) / 100),
+  };
+}
+export const BLOCKS: BlockSpec[] = MAJOR_BLOCKS.map(currentEconomy);
+export function blockSpec(
+  index: number,
+  layoutVersion = 3,
+  economyRevision = 2,
+): BlockSpec {
   if (index < 32)
-    return (layoutVersion === 1 ? LEGACY_BLOCKS : layoutVersion === 2 ? LEGACY_V2_BLOCKS : BLOCKS)[Math.max(0, index)];
-  if (layoutVersion >= 3) return recoveryContract(index);
-  const base = (layoutVersion === 1 ? LEGACY_BLOCKS : LEGACY_V2_BLOCKS)[18 + ((index - 32) % 13)];
+    return (
+      layoutVersion === 1
+        ? LEGACY_BLOCKS
+        : layoutVersion === 2
+          ? LEGACY_V2_BLOCKS
+          : economyRevision >= 2
+            ? BLOCKS
+            : MAJOR_BLOCKS
+    )[Math.max(0, index)];
+  if (layoutVersion >= 3) {
+    const b = recoveryContract(index);
+    return economyRevision >= 2 ? currentEconomy(b, index) : b;
+  }
+  const base = (layoutVersion === 1 ? LEGACY_BLOCKS : LEGACY_V2_BLOCKS)[
+    18 + ((index - 32) % 13)
+  ];
   return {
     ...base,
     id: `contract-${index - 31}`,
@@ -321,6 +363,7 @@ export type StoryMessage = {
   text: string;
 };
 export type StoryEvent = {
+  deliveryMode: NarrativeDeliveryMode;
   id: string;
   chapter: number;
   trigger: Trigger;
@@ -346,6 +389,7 @@ const story = (
   lines: string[],
   options: Partial<StoryEvent> = {},
 ): StoryEvent => ({
+  deliveryMode: 'silent',
   id,
   chapter,
   trigger,
@@ -788,4 +832,4 @@ export const STORY: StoryEvent[] = [
       !authoredEvents.some((e) => e.id === old.id) &&
       !majorStoryById.has(old.id),
   ).map((e) => ({ ...e, retired: true })),
-];
+].map(restrainedEvent);

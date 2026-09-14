@@ -1303,6 +1303,22 @@
   font: 700 33px var(--display-type);
   color: #ded0a3;
 }
+.tool-reveal .requisition-source {
+  display: block;
+  max-width: 38em;
+  margin: 4px auto 12px;
+  font: 600 10px/1.6 var(--body-type);
+  letter-spacing: 1.5px;
+  color: #a7ac98;
+}
+.tool-reveal .requisition-note {
+  width: fit-content;
+  margin: 14px auto;
+  padding: 8px 18px;
+  border-top: 1px solid #b2a16a38;
+  font: italic 15px/1.5 var(--body-type);
+  color: #c7ba91;
+}
 .tool-reveal-actions {
   display: flex;
   gap: 15px;

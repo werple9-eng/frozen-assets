@@ -22,11 +22,11 @@ void test('the compact maps hold 70 distinct fittings with exact tool prices and
   );
   assert.deepEqual(TOOL_PRICES, {
     hand: 0,
-    pick: 2500,
-    heavy: 6500,
-    sledge: 22000,
-    breaker: 35000,
-    thermal: 45000,
+    pick: 2250,
+    heavy: 6000,
+    sledge: 20000,
+    breaker: 33000,
+    thermal: 42500,
   });
   assert.deepEqual(NODE_PRICE_BANDS, {
     hand: { micro: [60, 220], major: [300, 650] },

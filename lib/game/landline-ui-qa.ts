@@ -11,6 +11,7 @@ export async function tutorialUIAudit(s: GameScene) {
   const m = s.model as GameModel,
     saved = m.serialize(),
     result: Record<string, unknown> = {};
+  const gamepads = Object.getOwnPropertyDescriptor(navigator, 'getGamepads');
   const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   const click = (selector: string) =>
     document.querySelector<HTMLButtonElement>(selector)?.click();
@@ -84,6 +85,12 @@ export async function tutorialUIAudit(s: GameScene) {
     );
   };
   try {
+    // Hardware axes must not move focus during a deterministic keyboard/mouse
+    // audit. Controller navigation has its own explicit gamepad fixture.
+    Object.defineProperty(navigator, 'getGamepads', {
+      configurable: true,
+      value: () => [],
+    });
     s.automation = undefined;
     s.cancelInput();
     await close();
@@ -189,9 +196,7 @@ export async function tutorialUIAudit(s: GameScene) {
     node?.click();
     await wait(500);
     result.purchased =
-      m.tutorial!.continuous &&
-      m.nodes.hand.includes('HC-S1') &&
-      m.money === 37;
+      m.tutorial!.continuous && m.nodes.hand.includes('HC-S1') && m.money === 2;
     result.cannotLeaveAcknowledgement =
       document.querySelector<HTMLButtonElement>(
         '.skill-screen .bench-return',
@@ -203,7 +208,7 @@ export async function tutorialUIAudit(s: GameScene) {
     result.upgradeButtonBounds = await buttonBounds('.skill-screen button');
     await close();
     result.secondParcel =
-      m.tutorial!.block === 2 && m.tutorial!.step === 11 && m.loot.length === 6;
+      m.tutorial!.block === 2 && m.tutorial!.step === 11 && m.loot.length === 2;
     await next();
     key('o');
     await wait(600);
@@ -222,6 +227,8 @@ export async function tutorialUIAudit(s: GameScene) {
     result.archiveButtonBounds = await buttonBounds('.phone-screen button');
     await close();
     m.restart();
+    m.campaign!.state.block = 4;
+    m.campaign!.collect('tag');
     m.campaign!.deliver();
     m.answerPhone();
     m.emit();
@@ -261,6 +268,8 @@ export async function tutorialUIAudit(s: GameScene) {
       (result.archiveButtonBounds as string[]).length === 0;
     return result;
   } finally {
+    if (gamepads) Object.defineProperty(navigator, 'getGamepads', gamepads);
+    else delete (navigator as unknown as { getGamepads?: unknown }).getGamepads;
     if (m.tutorial) m.tutorial.mode = 'task';
     await close();
     s.cancelInput();

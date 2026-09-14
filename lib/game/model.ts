@@ -1,4 +1,5 @@
 import { graphicsQuality } from './graphics';
+import { reducedLegacyValue } from './economy';
 import {
   carriedEffects,
   migrateTreeV1,
@@ -281,12 +282,9 @@ export class GameModel {
     for (const t of TOOLS.filter((t) => t.id !== 'hand' && t.id !== 'grip')) {
       const id = t.id as MajorTool;
       if (this.campaign.state.tools.includes(id)) continue;
-      const intro = STORY.find((e) => e.id === `equipment.${id}`);
-      if (
-        this.campaign.state.block < t.block ||
-        (intro && !this.campaign.state.read.includes(intro.id))
-      )
-        continue;
+      // Equipment is routed to the bench on its delivery. Retired phone
+      // announcements must never remain hidden purchase prerequisites.
+      if (this.campaign.state.block < t.block) continue;
       if (!this.revealedTools.includes(id)) this.revealedTools.push(id);
       const kind = !this.toolNotices.includes(`available:${id}`)
         ? 'available'
@@ -505,10 +503,7 @@ export class GameModel {
     return {
       id: `${c.event}:${c.line}`,
       text: line.text,
-      speaker:
-        c.event === 'epilogue'
-          ? 'UNKNOWN LINE'
-          : storySpeaker(line.speaker).name,
+      speaker: storySpeaker(line.speaker).name,
       subtitle: storySpeaker(line.speaker).subtitle,
       institutional: storySpeaker(line.speaker).institutional,
     };
@@ -521,6 +516,9 @@ export class GameModel {
         this.tutorial!.mode === 'dialogue' &&
         !['board', 'chapter'].includes(this.tutorial!.stage))
     );
+  }
+  get phonePending() {
+    return !this.inTutorial && this.campaign?.state.call?.status === 'pending';
   }
   answerPhone() {
     if (this.phoneOffHook) return;
@@ -572,6 +570,7 @@ export class GameModel {
     this.stop();
     this.strikeClock = 0;
     this.tutorial.block = block;
+    if (this.campaign) this.campaign.state.economyRevision = 2;
     this.tutorial.legacyParcel = false;
     this.field = tutorialField(block);
     this.loot = tutorialLoot(block);
@@ -766,8 +765,18 @@ export class GameModel {
       this.phase = 'completing';
       this.elapsed = 0;
     } else {
-      this.nextBlock();
-      this.phase = 'transitioning';
+      if (
+        this.campaign?.state.block === 30 &&
+        !this.campaign.state.read.includes('ch5.final')
+      ) {
+        this.campaign.state.dispatchPending = true;
+        this.campaign.trigger('BLOCK_COMPLETE');
+        this.campaign.deliver();
+        this.onPhone();
+      } else {
+        this.nextBlock();
+        this.phase = 'transitioning';
+      }
     }
     this.onSave();
     this.emit();
@@ -1140,6 +1149,10 @@ export class GameModel {
     )
       return;
     if (this.phase === 'completed') {
+      if (this.campaign?.tickRinging(dt)) {
+        this.onSave();
+        this.emit();
+      }
       if (this.campaign?.advanceQuiet(dt, false)) {
         this.onPhone();
         this.onSave();
@@ -1148,21 +1161,24 @@ export class GameModel {
       return;
     }
     if (this.settlement) {
+      if (this.campaign?.tickRinging(dt)) {
+        this.onSave();
+        this.emit();
+      }
       this.settlementTime = Math.max(0, this.settlementTime - dt);
       return;
     }
+    if (this.campaign?.tickRinging(dt)) {
+      this.onSave();
+      this.emit();
+    }
     const custodyCall = this.campaign?.state;
-    if (
-      custodyCall?.block === 31 &&
-      custodyCall.phase === 2 &&
-      [custodyCall.call?.event, ...custodyCall.pending].some(
-        (id) => id === 'mercer.offer' || id === 'tony.mercer.offer',
-      )
-    ) {
-      // This authored conversation precedes inner-vault work. It uses the
-      // normal physical pickup/Next flow; there is no timer or ending choice.
+    if (custodyCall?.dispatchPending) {
       this.stop();
-      if (!custodyCall.call) {
+      if (custodyCall.read.includes('ch5.final')) {
+        this.nextBlock();
+        this.phase = 'transitioning';
+      } else if (!custodyCall.call) {
         this.campaign!.deliver();
         this.onPhone();
         this.onSave();
@@ -1782,6 +1798,7 @@ export class GameModel {
             c.state.block,
             c.state.phase,
             c.state.layoutVersion ?? 1,
+            c.state.economyRevision ?? 1,
           );
           this.field = campaignField(
             c.state.block,
@@ -1950,6 +1967,7 @@ export class GameModel {
     return {
       phone: {
         ringing: !!this.phoneRinging,
+        pending: !!this.phonePending,
         offHook: this.phoneOffHook,
         dialing: this.dialing,
       },
@@ -2339,12 +2357,17 @@ export class GameModel {
       const loot = legacyCargo
         ? legacyCargoLoot(legacyCargo)
         : tutorialActive(tutorial)
-          ? tutorialLoot(tutorial!.block, tutorial!.legacyParcel)
+          ? tutorialLoot(
+              tutorial!.block,
+              tutorial!.legacyParcel,
+              restoredCampaign?.state.economyRevision ?? 1,
+            )
           : restoredCampaign && !restoredCampaign.state.legacyBlock
             ? campaignLoot(
                 restoredCampaign.state.block,
                 restoredCampaign.state.phase,
                 restoredCampaign.state.layoutVersion ?? 1,
+                restoredCampaign.state.economyRevision ?? 1,
               )
             : layout(s.round);
       if (
@@ -2491,6 +2514,18 @@ export class GameModel {
       this.legacyCargo = legacyCargo;
       this.legacyCargoSource = legacyCargo ? loot : undefined;
       this.loot.forEach((t, i) => {
+        if (
+          legacyCargo &&
+          restoredCampaign?.state.economyRevision === 1 &&
+          t.legacyValue === undefined
+        ) {
+          t.legacyValue = t.value;
+          t.value = reducedLegacyValue(t.value);
+        }
+        // Keep receipts for already earned historical finds at their original
+        // base. Unreleased finds use the reduced base and recomputed bonus.
+        if (savedLoot[i].credited && t.legacyValue !== undefined)
+          t.value = t.legacyValue;
         if (s.version >= 5)
           Object.assign(
             t,

@@ -869,7 +869,7 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
         while (m.phase !== 'completed' && steps++ < 30000) {
           // This fixture skips earlier calls explicitly. Real calls are manual;
           // leave the final queue intact so the actual ending UI can be tested.
-          if (m.phoneRinging) m.answerPhone();
+          if (m.phoneRinging || m.phonePending) m.answerPhone();
           if (m.liveCall) m.advanceCall();
           if (m.toolNotice) m.dismissToolNotice();
           if (m.field.values.some((value) => value > 0)) {
@@ -953,7 +953,7 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
               i++
             ) {
               await frames(12);
-              if (m.phoneRinging || m.liveCall) {
+              if (m.phoneRinging || m.phonePending || m.liveCall) {
                 sawCall = true;
                 await press(0);
               }
@@ -1056,47 +1056,59 @@ export function registerGameTools(s: GameScene, read: () => unknown) {
       async () => {
         const audit = (raw: string | null) => {
           if (!raw) return { found: false };
-          const old = JSON.parse(raw),
-            loaded = new GameModel(raw);
-          return {
-            found: true,
-            version: old.version,
-            round: old.round,
-            money: old.money,
-            recovered: old.recovered,
-            valid: loaded.saveStatus !== 'invalid',
-            balancePreserved: loaded.money === old.money,
-            progressionPreserved:
-              loaded.round === old.round && loaded.recovered === old.recovered,
-            upgradesPreserved: (Object.keys(LEGACY_LEVELS) as Upgrade[]).every(
-              (key) =>
-                loaded.upgrades[key] ===
-                (old.progression === 2
-                  ? old.upgrades[key]
-                  : LEGACY_LEVELS[key][old.upgrades[key]]),
-            ),
-            migratedLevels: loaded.upgrades,
-            thawPreserved: old.ice.every(
-              (v: number, i: number) =>
-                Math.abs(v - loaded.field.values[i]) < 0.000001,
-            ),
-            creditsPreserved: old.loot.every(
-              (t: { credited: boolean }, i: number) =>
-                t.credited === loaded.loot[i]?.credited,
-            ),
-            ownedToolsPreserved:
-              !old.campaign ||
-              old.campaign.tools.every((tool: string) =>
-                loaded.campaign?.state.tools.some((id) => id === tool),
+          try {
+            const old = JSON.parse(raw),
+              loaded = new GameModel(raw);
+            return {
+              found: true,
+              version: old.version,
+              round: old.round,
+              money: old.money,
+              recovered: old.recovered,
+              valid: loaded.saveStatus !== 'invalid',
+              migrationDiagnostics: loaded.saveDiagnostics,
+              balancePreserved: loaded.money === old.money,
+              progressionPreserved:
+                loaded.round === old.round &&
+                loaded.recovered === old.recovered,
+              upgradesPreserved: (
+                Object.keys(LEGACY_LEVELS) as Upgrade[]
+              ).every(
+                (key) =>
+                  loaded.upgrades[key] ===
+                  (old.progression === 2
+                    ? old.upgrades[key]
+                    : LEGACY_LEVELS[key][old.upgrades[key]]),
               ),
-            nodesPreserved:
-              !old.nodes ||
-              TOOL_ORDER.every((tool) =>
-                (old.nodes[tool] ?? []).every((id: string) =>
-                  loaded.nodes[tool].includes(id),
+              migratedLevels: loaded.upgrades,
+              thawPreserved: Array.isArray(old.ice)
+                ? old.ice.every(
+                    (v: number, i: number) =>
+                      Math.abs(v - loaded.field.values[i]) < 0.000001,
+                  )
+                : !!old.field &&
+                  JSON.stringify(old.field) ===
+                    JSON.stringify(JSON.parse(loaded.serialize()).field),
+              creditsPreserved: old.loot.every(
+                (t: { credited: boolean }, i: number) =>
+                  t.credited === loaded.loot[i]?.credited,
+              ),
+              ownedToolsPreserved:
+                !old.campaign ||
+                old.campaign.tools.every((tool: string) =>
+                  loaded.campaign?.state.tools.some((id) => id === tool),
                 ),
-              ),
-          };
+              nodesPreserved:
+                !old.nodes ||
+                TOOL_ORDER.every((tool) =>
+                  (old.nodes[tool] ?? []).every((id: string) =>
+                    loaded.nodes[tool].includes(id),
+                  ),
+                ),
+            };
+          } catch (error) {
+            return { found: true, valid: false, error: String(error) };
+          }
         };
         const [legacy, catalog] = await Promise.all([
           new BrowserSaveBackend().load(),

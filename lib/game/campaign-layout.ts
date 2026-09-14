@@ -1,6 +1,7 @@
 import { IceField } from './ice';
 import { blockSpec, type StoryObjectId } from './campaign-content';
 import { TUNE, type Loot, type LootKind, type Vec3 } from './tuning';
+import { phaseCargo, VALUABLES, reducedLegacyValue } from './economy';
 
 type VaultCompartment = {
   center: Vec3;
@@ -102,8 +103,9 @@ export function campaignLoot(
   block: number,
   phase = 0,
   layoutVersion = 3,
+  economyRevision = 2,
 ): Loot[] {
-  if (layoutVersion >= 3) return authoredLoot(block, phase);
+  if (layoutVersion >= 3) return authoredLoot(block, phase, economyRevision);
   const b = blockSpec(block, layoutVersion),
     field = campaignField(block, phase, undefined, layoutVersion),
     result: Loot[] = [];
@@ -253,8 +255,12 @@ function interiorCover(field: IceField) {
   return cover;
 }
 
-function authoredLoot(block: number, phase: number): Loot[] {
-  const b = blockSpec(block, 3),
+function authoredLoot(
+  block: number,
+  phase: number,
+  economyRevision: number,
+): Loot[] {
+  const b = blockSpec(block, 3, 1),
     spec = b.ice?.phases[phase];
   if (!spec) throw new Error(`Missing authored loot phase ${block}:${phase}`);
   const field = campaignField(block, phase, undefined, 3),
@@ -262,7 +268,12 @@ function authoredLoot(block: number, phase: number): Loot[] {
   const { width, height, depth } = spec.dimensions,
     cell = field.grid.cellSize;
   const object = phase === b.phases - 1 ? b.object : undefined;
-  const count = spec.lots + (object ? 1 : 0);
+  const cargo =
+    economyRevision >= 2
+      ? phaseCargo(block, phase, b.phases, spec.lots)
+      : undefined;
+  const lots = cargo?.length ?? spec.lots;
+  const count = lots + (object ? 1 : 0);
   const cover = interiorCover(field);
   const coverByDimensions = new Map<string, Float32Array>();
   const candidates = field.points.flatMap((p, i) =>
@@ -277,36 +288,38 @@ function authoredLoot(block: number, phase: number): Loot[] {
   const phaseGross =
     Math.round((gross * (priorWeight + spec.payoutWeight)) / totalWeight) -
     Math.round((gross * priorWeight) / totalWeight);
-  const kinds: LootKind[] = Array.from({ length: spec.lots }, (_, i) =>
-    b.contract?.archetype === 'clean-recovery'
-      ? i % 3
-        ? 'cash'
-        : 'gold'
-      : b.contract?.archetype === 'bulk-clearance' ||
-          b.contract?.archetype === 'service-call'
-        ? i % 2
-          ? 'gold'
-          : 'coin'
-        : b.contract?.archetype === 'deep-retrieval'
+  const kinds: LootKind[] = cargo
+    ? cargo.map((id) => VALUABLES[id].kind)
+    : Array.from({ length: lots }, (_, i) =>
+        b.contract?.archetype === 'clean-recovery'
           ? i % 3
-            ? 'gold'
-            : 'coin'
-          : block < 2
-            ? 'coin'
-            : block === 13
+            ? 'cash'
+            : 'gold'
+          : b.contract?.archetype === 'bulk-clearance' ||
+              b.contract?.archetype === 'service-call'
+            ? i % 2
+              ? 'gold'
+              : 'coin'
+            : b.contract?.archetype === 'deep-retrieval'
               ? i % 3
-                ? 'cash'
+                ? 'gold'
                 : 'coin'
-              : block === 31 && phase < 2
-                ? i % 2
-                  ? 'gold'
-                  : 'coin'
-                : i % 3 === 2 && b.chapter >= 2
-                  ? 'gold'
-                  : i % 2
+              : block < 2
+                ? 'coin'
+                : block === 13
+                  ? i % 3
                     ? 'cash'
-                    : 'coin',
-  );
+                    : 'coin'
+                  : block === 31 && phase < 2
+                    ? i % 2
+                      ? 'gold'
+                      : 'coin'
+                    : i % 3 === 2 && b.chapter >= 2
+                      ? 'gold'
+                      : i % 2
+                        ? 'cash'
+                        : 'coin',
+      );
   const weights = kinds.map((kind) =>
     kind === 'coin' ? 1 : kind === 'cash' ? 2.5 : 4,
   );
@@ -319,7 +332,7 @@ function authoredLoot(block: number, phase: number): Loot[] {
   if (vault && object) placementOrder.unshift(placementOrder.pop()!);
   for (const i of placementOrder) {
     const authored = vault?.[i];
-    const story = i === spec.lots ? object : undefined,
+    const story = i === lots ? object : undefined,
       kind = story ? 'gold' : kinds[i];
     const custodyCase = !!vault && !story && kind !== 'coin';
     const dimensions = story
@@ -444,19 +457,25 @@ function authoredLoot(block: number, phase: number): Loot[] {
       .slice(0, i)
       .reduce((sum, weight) => sum + weight, 0);
     const paidWeight = beforeWeight + (story ? 0 : weights[i]);
-    const value = story
+    const oldValue = story
       ? 0
       : Math.round((phaseGross * paidWeight) / weightSum) -
         Math.round((phaseGross * beforeWeight) / weightSum);
-    const variant = custodyCase
-      ? kind === 'cash'
-        ? 4
-        : 5
-      : (block + phase + i) % Math.min(6, b.chapter + 2);
+    const asset = story ? undefined : cargo?.[i];
+    const value = asset ? VALUABLES[asset].value : reducedLegacyValue(oldValue);
+    const variant = asset
+      ? VALUABLES[asset].variant
+      : custodyCase
+        ? kind === 'cash'
+          ? 4
+          : 5
+        : (block + phase + i) % Math.min(6, b.chapter + 2);
     result.push({
       id: `v3-c${block}-${phase}-${story ? 'story' : i}`,
       kind,
       value,
+      legacyValue: economyRevision < 2 ? oldValue : undefined,
+      asset,
       x: best.x,
       y: best.y,
       z: best.z,
@@ -469,11 +488,13 @@ function authoredLoot(block: number, phase: number): Loot[] {
       variant,
       name:
         story ??
-        (custodyCase
-          ? kind === 'cash'
-            ? 'Sealed archive case'
-            : 'Bullion custody case'
-          : names[kind === 'coin' ? 0 : kind === 'cash' ? 1 : 2][variant]),
+        (asset
+          ? VALUABLES[asset].name
+          : custodyCase
+            ? kind === 'cash'
+              ? 'Sealed archive case'
+              : 'Bullion custody case'
+            : names[kind === 'coin' ? 0 : kind === 'cash' ? 1 : 2][variant]),
     });
     orderedResult[i] = result[result.length - 1];
   }

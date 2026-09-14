@@ -471,7 +471,7 @@ void test('all 32 authored deliveries meet physical budgets with deterministic c
       // The authored outer-shell budgets predate solid cargo packing. Account
       // explicitly for the now-filled cavity volume instead of shrinking ice.
       const historical = campaignField(delivery, phase, undefined, 3);
-      historical.carveLoot(loot, true);
+      historical.carveLoot(campaignLoot(delivery, phase, 3, 1), true);
       const packing = solid - historical.remaining();
       assert.ok(
         solid >= p.targetSolidSamples.min * 0.88 &&

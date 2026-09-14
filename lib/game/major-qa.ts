@@ -518,6 +518,10 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
       event = STORY.find((e) => e.id === id && !e.retired);
     if (running) throw Error('A major QA measurement is already running.');
     if (!event) throw Error('Unknown active story event.');
+    if (model.inTutorial)
+      throw Error(
+        'Load an authored campaign delivery before this call fixture.',
+      );
     if (event.at !== undefined && event.at !== campaign.state.block)
       throw Error(`Load delivery ${event.at + 1} before this call fixture.`);
     if (event.atPhase !== undefined && campaign.state.phase < event.atPhase)
@@ -562,7 +566,8 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
     for (let i = 0; i <= event.messages.length; i++) {
       const current = campaign.state.call;
       if (!current || current.event !== id) break;
-      if (current.status === 'ringing') model.answerPhone();
+      if (current.status === 'ringing' || current.status === 'pending')
+        model.answerPhone();
       if (!model.advanceCall(`${id}:${current.line}`)) break;
     }
     return {
@@ -868,6 +873,9 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
             performance.now() < deadline
           )
             await wait(40, signal);
+          // Compare the fully built identical fixture, not the variable number
+          // of inner chunks uploaded during the 40 ms in-flight peel sample.
+          const warmed = gpu(current);
           // Exercise the additional geometry owned by a physical phase peel.
           // Half the scenes are disposed during it; half after it has drained.
           const outer = sample.field.spec!;
@@ -907,8 +915,8 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
           const shellsBeforeDispose = current.phaseShells.length;
           const live = gpu(current),
             rendered = current.renderTimes.length;
-          liveGeometry.push(live.geometries);
-          liveTextures.push(live.textures);
+          liveGeometry.push(warmed.geometries);
+          liveTextures.push(warmed.textures);
           const frameError = current.frameError;
           current.dispose();
           const last = current.last,
@@ -931,6 +939,7 @@ export function createMajorQA(scene: GameScene, signal: AbortSignal) {
             shellsAfterDispose: current.phaseShells.length,
             elapsedMs: performance.now() - created,
             beforeWarm,
+            warmed,
             live,
             afterDispose: after,
             renderedFrames: rendered,

@@ -221,15 +221,16 @@ export function tutorialField(
   if (saved) field.values.set(saved);
   return field;
 }
-export function tutorialLoot(block: 0 | 1 | 2, legacy = false): Loot[] {
+export function tutorialLoot(block: 0 | 1 | 2, legacy = false, economyRevision = 2): Loot[] {
   if (!block) return [];
   const s = blockSpec(0).scale * (block === 2 ? 0.68 : 0.45) * TUNE.worldScale;
   const practice = block === 2 && !legacy;
-  const positions = practice ? [-1.2, 0, 1.2, -1.2, 0, 1.2] : [-0.83, 0.77];
+  const positions = practice ? economyRevision >= 2 ? [-0.9, 0.9] : [-1.2, 0, 1.2, -1.2, 0, 1.2] : [-0.83, 0.77];
   return positions.map((x, i) => ({
     id: `tutorial-${block}-${i}`,
     kind: block === 2 && i === 1 ? 'cash' : 'coin',
-    value: block === 2 && i === 1 ? 70 : i > 1 ? 10 : 35,
+    value: economyRevision >= 2 ? block === 2 && i === 1 ? 55 : 15 : block === 2 && i === 1 ? 30 : i > 1 ? 5 : 15,
+    legacyValue: economyRevision >= 2 ? undefined : block === 2 && i === 1 ? 70 : i > 1 ? 10 : 35,
     name: i ? 'Second claim' : 'Your first coin',
     x: x * s,
     y: 0.18 + (practice ? 0.68 + (i % 3) * 0.08 : i ? 0.64 : 0.92) * s,

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { RESTRAINED_STORY } from '../lib/game/narrative';
 import { GameModel } from '../lib/game/model';
 import { STORY, TOOLS } from '../lib/game/campaign-content';
 import {
@@ -44,6 +45,7 @@ void test('the full authored tutorial is preserved in exactly seventeen panels',
 });
 void test('an active call survives reload, pauses work, and only advances by confirmation', () => {
   const m = new GameModel();
+  m.campaign!.collect('tag');
   m.campaign!.deliver();
   m.answerPhone();
   const id = m.liveCall!.id,
@@ -82,6 +84,7 @@ void test('bank warning and Tony response use separate physical pickups', () => 
 void test('outgoing dial, tutorial map acknowledgement and board history cannot skip ahead', () => {
   const m = new GameModel();
   m.campaign!.state.call = undefined;
+  m.campaign!.collect('tag');
   m.answerPhone();
   assert.equal(m.dialing, true);
   assert.equal(m.dialTony('2'), false);
@@ -92,7 +95,7 @@ void test('outgoing dial, tutorial map acknowledgement and board history cannot 
   assert.equal(m.buyContinuous(), false);
   m.advanceTutorial();
   assert.equal(m.buyContinuous(), true);
-  assert.equal(m.money, 37);
+  assert.equal(m.money, 2);
   assert.equal(TOOLS.find((t) => t.id === 'grip')!.name, 'Hold to Chip');
   forceTutorialStep(m, 13);
   assert.ok(
@@ -101,7 +104,9 @@ void test('outgoing dial, tutorial map acknowledgement and board history cannot 
 });
 void test('campaign scripts remain verbatim and final calls can drain after completion', () => {
   for (const [id, lines] of Object.entries(AUTHORED_DIALOGUE)) {
-    const replacement = MAJOR_STORY_EVENTS.find((event) => event.id === id);
+    const replacement =
+      RESTRAINED_STORY.find((e) => e.id === id) ??
+      MAJOR_STORY_EVENTS.find((event) => event.id === id);
     const event = STORY.find((event) => event.id === id);
     assert.ok(event, id);
     assert.deepEqual(
@@ -120,11 +125,17 @@ void test('campaign scripts remain verbatim and final calls can drain after comp
   m.field = campaignField(31, c.state.phase, undefined, 3);
   m.loot = campaignLoot(31, c.state.phase, 3);
   c.state.pending = [];
+  c.state.phase = 2;
+  c.trigger('FINAL_LAYER_OPENED');
+  c.state.phase = 4;
+  m.toolNotices = ['pick', 'heavy', 'sledge', 'breaker', 'thermal'].flatMap(
+    (id) => [`available:${id}`, `ready:${id}`],
+  );
   m.field.values.fill(0);
   m.field.dirty = true;
   for (let i = 0; i < 12; i++) {
     for (let frame = 0; frame < 80; frame++) m.update(0.05, null);
-    if (m.phoneRinging) m.answerPhone();
+    if (m.phoneRinging || m.phonePending) m.answerPhone();
     while (m.liveCall) m.advanceCall();
     m.skipSettlement();
   }

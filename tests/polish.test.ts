@@ -238,7 +238,7 @@ void test('authored purchases enforce tool ownership and prerequisites, persist 
   invalid.nodes.pick = ['IP-P2'];
   assert.equal(new GameModel(JSON.stringify(invalid)).saveStatus, 'invalid');
 });
-void test('tool reveals follow read story, affordability fires once, and buying is a separate saved step', () => {
+void test('tool cards arrive without phone prerequisites, affordability fires once, and buying is a separate saved step', () => {
   const m = new GameModel(),
     c = m.campaign!,
     t = TOOLS.find((t) => t.id === 'pick')!;
@@ -247,7 +247,7 @@ void test('tool reveals follow read story, affordability fires once, and buying 
   m.loot = campaignLoot(t.block);
   c.trigger('BLOCK_START');
   m.checkTools();
-  assert.equal(m.revealedTools.includes('pick'), false);
+  assert.equal(m.revealedTools.includes('pick'), true);
   assert.equal(m.buyTool('pick'), false);
   c.openPhone();
   m.checkTools();
@@ -696,29 +696,29 @@ void test('regrabbing stops map coast immediately and gentle release travels les
   assert.equal(fast.x, x);
   assert.equal(fast.vx, 0);
 });
-void test('completed faster-than-expected call cannot redeliver; stale Next is ignored and saved duplicates are repaired', () => {
+void test('completed tag call cannot redeliver; stale Next is ignored and saved duplicates are repaired', () => {
   const m = new GameModel(),
     c = m.campaign!;
   c.state.block = m.round = 2;
   c.state.pending = [];
-  c.trigger('BLOCK_START');
+  c.collect('tag');
   c.deliver();
   m.answerPhone();
   m.field = campaignField(2);
   m.loot = campaignLoot(2);
   m.field.carveLoot(m.loot);
   const id = m.liveCall!.id;
-  assert.equal(id, 'ch1.more:0');
+  assert.equal(id, 'ch1.tag:0');
   m.advanceCall(id);
   assert.equal(m.advanceCall(id), false);
-  assert.equal(m.liveCall!.id, 'ch1.more:1');
-  c.state.pending.push('ch1.more');
+  assert.equal(m.liveCall!.id, 'ch1.tag:1');
+  c.state.pending.push('ch1.tag');
   const n = new GameModel(m.serialize());
   assert.notEqual(n.saveStatus, 'invalid');
   assert.equal(n.campaign!.state.pending.length, 0);
   n.advanceCall(n.liveCall!.id);
-  assert.ok(n.campaign!.state.read.includes('ch1.more'));
-  n.campaign!.state.pending.push('ch1.more');
+  assert.ok(n.campaign!.state.read.includes('ch1.tag'));
+  n.campaign!.state.pending.push('ch1.tag');
   n.campaign!.deliver();
   assert.equal(n.phoneRinging, false);
   for (let i = 0; i < 200; i++) n.update(0.05, null);

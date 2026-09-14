@@ -76,6 +76,9 @@ function checkpoint(block: number, phase: number) {
     (e) => e.id,
   );
   model.campaign!.state.pending = [];
+  model.toolNotices = ['pick', 'heavy', 'sledge', 'breaker', 'thermal'].flatMap(
+    (id) => [`available:${id}`, `ready:${id}`, `acquired:${id}`],
+  );
   model.field = campaignField(block, phase, undefined, 3);
   model.loot = campaignLoot(block, phase, 3);
   model.field.carveLoot(model.loot);

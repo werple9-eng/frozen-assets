@@ -3,8 +3,30 @@ import assert from 'node:assert/strict';
 import {
   incomingCallPresentation,
   phoneRingSample,
+  PhoneRingCadence,
 } from '../lib/game/phone-call';
 import { GameAudio } from '../lib/game/audio';
+
+void test('pausing or opening menus cannot restart a ring cycle or exceed three audible rings', () => {
+  const cadence = new PhoneRingCadence();
+  const call = { event: 'ch1.tag', line: 0, ringSeconds: 0 };
+  let starts = Number(cadence.next(call, true));
+  for (let i = 1; i <= 126; i++) {
+    call.ringSeconds = i / 10;
+    assert.equal(cadence.next(call, false), false);
+    starts += Number(cadence.next(call, true));
+    assert.equal(cadence.next(call, true), false);
+  }
+  assert.equal(starts, 3);
+  assert.equal(cadence.next({ ...call, ringSeconds: 20 }, true), false);
+  assert.equal(
+    cadence.next({ ...call, event: 'mercer.first', ringSeconds: 0 }, true),
+    true,
+  );
+  const resumed = new PhoneRingCadence();
+  assert.equal(resumed.next({ ...call, ringSeconds: 8.5 }, true), true);
+  assert.equal(resumed.next({ ...call, ringSeconds: 12.6 }, true), false);
+});
 
 void test('the physical ring and incoming banner distinguish every Mercer call from Tony and the epilogue', () => {
   for (const event of [

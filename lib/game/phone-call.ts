@@ -2,7 +2,28 @@ import { STORY } from './campaign-content';
 import { storySpeaker } from './major-story';
 
 export type PhoneRing = 'private' | 'institutional';
-export type IncomingCall = { event: string; line: number };
+export type IncomingCall = {
+  event: string;
+  line: number;
+  ringSeconds?: number;
+};
+
+/** One audible start per persisted ring cycle, including pause/menu interruptions. */
+export class PhoneRingCadence {
+  private event = '';
+  private cycle = -1;
+  next(call: IncomingCall | undefined, audible: boolean) {
+    if (call?.event !== this.event) {
+      this.event = call?.event ?? '';
+      this.cycle = -1;
+    }
+    if (!call || !audible) return false;
+    const cycle = Math.floor((call.ringSeconds ?? 0) / 4.2);
+    if (cycle >= 3 || cycle <= this.cycle) return false;
+    this.cycle = cycle;
+    return true;
+  }
+}
 
 /** Both the physical phone and incoming banner resolve the same caller. */
 export function incomingCallPresentation(call?: IncomingCall) {

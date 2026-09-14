@@ -76,6 +76,8 @@ const assumptions = {
   receiptInspectionSeconds: 4,
   evidenceInspectionSeconds: 8,
   policyBehavior: {
+    phone:
+      'The economy agent proactively checks queued calls at safe decision points. This bypasses automatic notification spacing and measures reading cost, not the automatic ringing schedule. Narrative spacing is tested separately.',
     aiming:
       'Power/Speed/Saver use direct nearest-support rays. Mixed, Technique and Control inspect visible nearby offsets beside exposed economic cargo with remaining grade premium. Each candidate is charged only the actual rounded grade premium its predicted contact can lose, never authored base money or an already-lost bonus. Loss is normalized by mean phase cargo value. Control considers more offsets and gives preservation greater weight.',
     toolObjective:
@@ -1293,7 +1295,8 @@ function writeResults(status) {
     stoppedAfterDelivery: through,
     source: fingerprint,
     wallSeconds: rounded((performance.now() - wallStart) / 1000),
-    estimatedExperienceMinutes: rounded(clock / 60),
+    estimatedExperienceMinutes: rounded((clock - tutorialSeconds) / 60),
+    totalExperienceIncludingTutorialMinutes: rounded(clock / 60),
     campaignActiveMinutes: rounded(active / 60),
     tutorialMinutes: rounded(tutorialSeconds / 60),
     tutorialActiveMinutes: rounded(tutorialActive / 60),
@@ -1302,12 +1305,16 @@ function writeResults(status) {
     ),
     assumptions,
     targets: {
-      campaignActiveMinutes: [45, 55],
-      estimatedExperienceMinutes: [75, 95],
+      estimatedExperienceMinutes: [105, 130],
+      endNodePercent: [45, 60],
     },
     targetChecks: {
-      active: active / 60 >= 45 && active / 60 <= 55,
-      experience: clock / 60 >= 75 && clock / 60 <= 95,
+      experience:
+        (clock - tutorialSeconds) / 60 >= 105 &&
+        (clock - tutorialSeconds) / 60 <= 130,
+      endNodeOwnership:
+        nodeIds().length / ALL_TOOL_NODES.length >= 0.45 &&
+        nodeIds().length / ALL_TOOL_NODES.length <= 0.6,
     },
     financialIntegrity: campaignStartAccount
       ? {
@@ -1365,6 +1372,8 @@ function writeResults(status) {
     pristine: campaignAwards.filter((a) => a.grade === 'PRISTINE').length,
     nodes: nodeIds(),
     nodeCount: nodeIds().length,
+    totalPurchasableNodes: ALL_TOOL_NODES.length,
+    endNodePercent: rounded((100 * nodeIds().length) / ALL_TOOL_NODES.length),
     midgame: midgame ?? {
       seconds: rounded(clock),
       activeSeconds: rounded(active),
@@ -1491,7 +1500,11 @@ try {
   phaseStart();
   while (m.phase !== 'completed' && clock < maxSeconds) {
     const c = m.campaign;
-    if (m.phase !== 'completing' && currentPhase?.field !== m.field) {
+    if (
+      m.phase !== 'completing' &&
+      !c.state.dispatchPending &&
+      currentPhase?.field !== m.field
+    ) {
       phaseEnd();
       if (currentDelivery?.block !== m.round + 1) deliveryEnd();
       phaseStart();
@@ -1510,14 +1523,14 @@ try {
       deliveryEnd();
       if (m.round + 1 >= through && through < 32) break;
       m.skipSettlement();
-      if (m.phase !== 'completing') phaseStart();
+      if (m.phase !== 'completing' && !c.state.dispatchPending) phaseStart();
       continue;
     }
     if (c.state.call || c.state.pending.length) {
       if (!c.state.call) c.deliver();
       const call = c.state.call;
       if (call) {
-        if (m.phoneRinging) {
+        if (m.phoneRinging || m.phonePending) {
           addTime('reading', assumptions.pickupSeconds);
           m.answerPhone();
         }
